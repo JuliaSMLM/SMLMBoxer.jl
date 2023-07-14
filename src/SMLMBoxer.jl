@@ -1,5 +1,9 @@
 module SMLMBoxer
 
-# Write your package code here.
+using Flux
+using CUDA
+
+include("types.jl")
+include("interface.jl")
 
 end

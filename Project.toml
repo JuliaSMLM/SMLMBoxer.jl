@@ -3,6 +3,11 @@ uuid = "a7d3b33b-b840-4f8e-b556-99be03134090"
 authors = ["klidke@unm.edu"]
 version = "1.0.0-DEV"
 
+[deps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
+cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
+
 [compat]
 julia = "1.9"
 
