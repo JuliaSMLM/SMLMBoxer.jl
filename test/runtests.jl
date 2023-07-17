@@ -4,7 +4,7 @@ using Test
 @testset "SMLMBoxer.jl" begin
 
     # Test image with two bright peaks
-    image = zeros(100, 100)
+    image = zeros(Float32, 100, 100)
     image[20, 50] = 10
     image[30, 60] = 10
 
@@ -39,7 +39,7 @@ using Test
 
 
     # Test image with two close bright peaks
-    image = zeros(100, 100)
+    image = zeros(Float32, 100, 100)
     image[20, 50] = 20
     image[21, 51] = 10
 
