@@ -3,6 +3,8 @@ module SMLMBoxer
 using Flux
 using CUDA
 
+export getboxes 
+
 include("types.jl")
 include("filter.jl")
 include("localmax.jl")
