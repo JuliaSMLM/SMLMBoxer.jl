@@ -20,7 +20,7 @@ using Test
         use_gpu=false
     )
 
-    boxes, coords = SMLMBoxer.getboxes(
+    boxes, boxcoords, maxcoords = SMLMBoxer.getboxes(
         imagestack=args.imagestack,
         boxsize=args.boxsize,
         overlap=args.overlap,
@@ -34,8 +34,8 @@ using Test
     @test size(boxes) == (5, 5, 2)
 
     # Verify correct box location
-    @test coords[1, :] ≈ [20, 50, 1]
-    @test coords[2, :] ≈ [30, 60, 1]
+    @test maxcoords[1, :] ≈ [20, 50, 1]
+    @test maxcoords[2, :] ≈ [30, 60, 1]
 
 
     # Test image with two close bright peaks
@@ -56,7 +56,7 @@ using Test
 
 
     # Get boxes with overlap set to 5
-    boxes, coords = SMLMBoxer.getboxes(
+    boxes, boxcoords, maxcoords = SMLMBoxer.getboxes(
         imagestack=args.imagestack,
         boxsize=args.boxsize,
         overlap=args.overlap,
@@ -70,7 +70,7 @@ using Test
     @test size(boxes) == (5, 5, 1)
 
     # Verify correct box location
-    @test coords[1, :] ≈ [20, 50, 1]
+    @test maxcoords[1, :] ≈ [20, 50, 1]
 
     # Verify correct box location and intensity - not correct because intentisy is after DoG
     # @test coords[1, :] ≈ [20, 50, 1, 2]
