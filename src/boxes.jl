@@ -15,6 +15,7 @@ function getboxstack(imagestack, coords, kwargs::GetBoxesArgs)
 
     nboxes = size(coords, 1)
     boxstack = zeros(eltype(imagestack), kwargs.boxsize, kwargs.boxsize, nboxes)
+    boxcoords = zeros(Int, nboxes, 3)
 
     # Cut out the boxes
     for i in 1:nboxes
@@ -22,10 +23,10 @@ function getboxstack(imagestack, coords, kwargs::GetBoxesArgs)
         col = Int(coords[i, 2])
         im = Int(coords[i, 3])
         box = @view boxstack[:, :, i]
-        fillbox!(box, imagestack, row, col, im, kwargs.boxsize)
+        boxcoords[i,:] = fillbox!(box, imagestack, row, col, im, kwargs.boxsize)
     end
 
-    return boxstack
+    return boxstack, boxcoords
 end
 
 """
@@ -40,7 +41,7 @@ Fill a box with a crop from the imagestack.
 - `boxsize`: Size of box
 
 # Returns
-- Nothing, fills `box` in-place
+- `boxcoords`: Upper Left corners of boxes N x (row, col, im)
 """
 function fillbox!(box::AbstractArray{<:Real,2}, imagestack::AbstractArray{<:Real,4}, row::Int, col::Int, im::Int, boxsize::Int)
     # Get the size of the image stack
@@ -75,5 +76,6 @@ function fillbox!(box::AbstractArray{<:Real,2}, imagestack::AbstractArray{<:Real
 
     box .= imagestack[row_min:row_max, col_min:col_max, 1, im]
 
-    return nothing
+    boxcoords = [row_min, col_min, im]
+    return boxcoords
 end

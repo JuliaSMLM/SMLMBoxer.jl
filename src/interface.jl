@@ -6,19 +6,19 @@ coordinates and boxed regions centered around local maxima.
 
 # Arguments
 - `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
-- `boxsize::Int`: Size of the box to cut out around each local maximum.  
-- `overlap::Real`: Minimum distance between box centers. Boxes closer than this will
-  be removed.
-- `sigma_small::Real`: Sigma for small Gaussian blur kernel. 
-- `sigma_large::Real`: Sigma for large Gaussian blur kernel.
+- `boxsize::Int`: Size of the box to cut out around each local maximum (pixels).  
+- `overlap::Real`: Amount of overap allowed between boxes (pixels). 
+- `sigma_small::Real`: Sigma for small Gaussian blur kernel (pixels). 
+- `sigma_large::Real`: Sigma for large Gaussian blur kernel (pixels).
 - `minval::Real`: Minimum value to consider as a local maximum.  
-- `use_gpu::Bool`: Perform convolution on GPU. Requires CuArrays package.
+- `use_gpu::Bool`: Perform convolution and local max finding on GPU. 
 
 # Returns
 - `boxstack::AbstractArray{<:Real}`: Array with dimensions (boxsize, boxsize, nboxes).
-  Each image in the stack contains a small boxed region from imagestack. 
-- `coords::Matrix{Float32}`: Coordinates of boxes N x (row, col, frame).
-  
+  Each image in the stack contains a small subregion from imagestack centered around a local maximum
+  - `boxcoords::Matrix{Float32}`: Coordinates of boxes N x (row, col, frame).
+  - `maxcoords::Matrix{Float32}`: Coordinates of boxes N x (row, col, frame).
+
 # Details on filtering
 
 The image stack is convolved with a difference of Gaussians (DoG) filter
@@ -31,7 +31,7 @@ out around each maximum, excluding overlaps.
 
 # Examples  
 ```julia
-boxes, coords = getboxes(imagestack, boxsize=7, overlap=2.0,  
+boxes, boxcoords, maxcoords = getboxes(imagestack, boxsize=7, overlap=2.0,  
                          sigma_small=1.0, sigma_large=2.0)
 ```
 """
@@ -57,11 +57,11 @@ function getboxes(; kwargs...)
     coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
   end
 
-  coords = removeoverlap(coords, args)
-  boxstack = getboxstack(imagestack, coords, args)
+  maxcoords = removeoverlap(coords, args)
+  boxstack, boxcoords = getboxstack(imagestack, maxcoords, args)
 
   # Return the box stack and the coords  
-  return boxstack, coords
+  return boxstack, boxcoords, maxcoords
 end
 
 
