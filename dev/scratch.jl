@@ -1,6 +1,7 @@
 using Revise
 using SMLMBoxer
 using Flux
+using Images
 
 include("visutil.jl")
 
@@ -17,10 +18,18 @@ imagestack = conv_layer(Float32.(data))
 showscaled(imagestack)
 
 
+
 sigma_small, sigma_large, minval = 1, 2, 0.00
 
-localmaximage = SMLMBoxer.genlocalmaximage(imagestack, sigma_small, sigma_large, minval)
-showscaled(localmaximage)
+filtered_stack = SMLMBoxer.dog_filter(imagestack, SMLMBoxer.GetBoxesArgs(;sigma_small, sigma_large, minval, use_gpu=true))
+showscaled(filtered_stack |> cpu)
+
+break
+
+localmaximage = SMLMBoxer.genlocalmaximage(filtered_stack, 7; minval)
+showscaled(localmaximage |> cpu)
+
+break
 
 showscaled(data)
 

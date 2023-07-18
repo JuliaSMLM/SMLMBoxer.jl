@@ -1,34 +1,33 @@
 """  
-   maxima2coords(maximage, args)
+   maxima2coords(imagestack)
  
-Get coords of non-zero pixels in local max image.
+Get coordinates of all non-zero pixels in input stack 
 
 # Arguments
-- `maximage`: Local max image
-- `args`: Parameters 
+- `imagestack`: Input image stack
 
 # Returns
 - `coords`: List of coords for each frame
 """
-function maxima2coords(localmaximage::AbstractArray{Float32}, kwargs::GetBoxesArgs)
+function maxima2coords(imagestack::AbstractArray{Float32})
 
-    nframes = size(localmaximage, 4)
+    nframes = size(imagestack, 4)
     coords = Vector{Matrix{Float32}}(undef, nframes)
 
     # Count the number of non-zero elements in each frame
-    nboxes = sum(!iszero, localmaximage, dims=(1, 2))
+    nboxes = sum(!iszero, imagestack, dims=(1, 2))
 
     for f in 1:nframes
         coords[f] = zeros(Float32, nboxes[f], 4)
         idx_coords = 1
-        for j in axes(localmaximage, 2)
-            for i in axes(localmaximage, 1)
-                if localmaximage[i, j, 1, f] != 0
+        for j in axes(imagestack, 2)
+            for i in axes(imagestack, 1)
+                if imagestack[i, j, 1, f] != 0
                     # Fill in the output array
                     coords[f][idx_coords, 1] = Float32(i)
                     coords[f][idx_coords, 2] = Float32(j)
                     coords[f][idx_coords, 3] = Float32(f)
-                    coords[f][idx_coords, 4] = localmaximage[i, j, 1, f]
+                    coords[f][idx_coords, 4] = imagestack[i, j, 1, f]
                     idx_coords += 1
                 end
             end

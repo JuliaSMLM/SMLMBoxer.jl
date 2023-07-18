@@ -18,8 +18,10 @@ imagestack = conv_layer(Float32.(data));
 
 
 #This is the main function call
-boxes, coords = SMLMBoxer.getboxes(imagestack=imagestack[:, :, 1, :], use_gpu=true);
+@time boxes, coords = SMLMBoxer.getboxes(imagestack=imagestack[:, :, 1, :], use_gpu=true);
+@time boxes, coords = SMLMBoxer.getboxes(imagestack=imagestack[:, :, 1, :], use_gpu=false);
+
 
 display(showscaled(imagestack))
-display(showscaled(boxes))
+display(showscaled(boxes; nz = 15))
 
