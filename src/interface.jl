@@ -41,20 +41,61 @@ function getboxes(; kwargs...)
 
   imagestack = reshape_for_flux(args.imagestack)
 
-  # Determine whether to perform calculations on the GPU
-  args.use_gpu = args.use_gpu && has_cuda() && CUDA.functional()
-
   minkernelsize = 3
   kernelsize = Int(floor(args.boxsize - args.overlap))
   kernelsize = max(minkernelsize, kernelsize)
 
+  # Determine whether to perform calculations on the GPU
+  args.use_gpu = args.use_gpu && has_cuda() && CUDA.functional()
+
   if args.use_gpu
-    filtered_stack = dog_filter(imagestack |> gpu, args)
-    coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
-    CUDA.synchronize()
+      # Find the device with the most free memory
+      max_free_mem = 0
+      best_device = 0
+      for i in 0:length(CUDA.devices())-1
+          CUDA.device!(i)
+          free_mem = CUDA.available_memory()
+          if free_mem > max_free_mem
+              max_free_mem = free_mem
+              best_device = i
+          end
+      end
+      # Switch to the best device
+      CUDA.device!(best_device)
+
+      # Check the size of the image stack
+      memory_required = sizeof(imagestack) * 4 # 4x for the filtered stack, coords, and boxstack
+
+      if memory_required <= max_free_mem
+          # If the image stack fits in memory, perform the operation on the whole stack
+          filtered_stack = dog_filter(imagestack |> gpu, args)
+          coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
+      else
+          # If the image stack is too big, split it into smaller batches and process each batch separately
+          batch_size = Int(max_free_mem / memory_required)
+          n_batches = Int(ceil(length(imagestack) / batch_size))
+
+          filtered_stack = similar(imagestack)
+          coords = []
+
+          for i in 1:n_batches
+              start_idx = (i-1)*batch_size + 1
+              end_idx = min(i*batch_size, length(imagestack))
+
+              batch = imagestack[start_idx:end_idx] |> gpu
+
+              filtered_batch = dog_filter(batch, args)
+              coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
+
+              filtered_stack[start_idx:end_idx] = filtered_batch |> cpu
+              append!(coords, coords_batch)
+          end
+      end
+
+      CUDA.synchronize()
   else
-    filtered_stack = dog_filter(imagestack, args)
-    coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
+      filtered_stack = dog_filter(imagestack, args)
+      coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
   end
 
   maxcoords = removeoverlap(coords, args)
@@ -63,6 +104,7 @@ function getboxes(; kwargs...)
   # Return the box stack and the coords  
   return boxstack, boxcoords, maxcoords
 end
+
 
 
 
