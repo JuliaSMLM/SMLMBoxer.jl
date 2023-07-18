@@ -59,23 +59,5 @@ function getboxes(; kwargs...)
     return boxstack, coords
 end
 
-"""  
-   findlocalmax(stack, args)
-
-Apply DoG filter and extract local max coords. 
-
-# Arguments
-- `stack`: Input image stack
-- `args`: Parameters
-
-# Returns 
-- `coords`: Local max coordinates
-"""
-function findlocalmax(imagestack::AbstractArray{<:Real}, kwargs::GetBoxesArgs)
-    localmaximage = genlocalmaximage(imagestack, kwargs)
-    coords = maxima2coords(localmaximage, kwargs)
-    return coords
-end
-
 
 

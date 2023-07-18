@@ -50,7 +50,7 @@ function gaussian_2d(sigma::Float32, kernelsize::Int)
 end
 
 """   
-   difference_of_gaussians(s1, s2, ksize)
+dog_kernel(s1, s2, ksize)
 
 Compute difference of Gaussian kernels.   
  
@@ -62,55 +62,49 @@ Compute difference of Gaussian kernels.
 # Returns
 - `dog`: Difference of Gaussians kernel
 """
-function difference_of_gaussians(sigma_small::Float32, sigma_large::Float32, kernelsize::Int)
+function dog_kernel(sigma_small::Float32, sigma_large::Float32, kernelsize::Int)
     kernel_small = gaussian_2d(sigma_small, kernelsize)
     kernel_large = gaussian_2d(sigma_large, kernelsize)
     dog = kernel_small .- kernel_large
     return dog
 end
 
-"""
-   genlocalmaximage(stack, args)
-
-Apply DoG filter and find local maxima. 
-
-# Arguments 
-- `stack`: Input image stack
-- `args`: Parameters
-
-# Returns
-- `localmax`: Image with local max values
-"""
-function genlocalmaximage(imagestack::AbstractArray{<:Real}, kwargs::GetBoxesArgs)
-
+function dog_filter(imagestack::AbstractArray{<:Real}, kwargs::GetBoxesArgs)
+    
     sigma_small = kwargs.sigma_small
     sigma_large = kwargs.sigma_large
-    minval = kwargs.minval
-    use_gpu = kwargs.use_gpu
-
+    
     minkernelsize = 5
     kernelsize = max(minkernelsize, Int(ceil(sigma_large * 2)))
 
     # Make the difference of gaussians
-    dog = difference_of_gaussians(Float32(sigma_small), Float32(sigma_large), kernelsize)
+    dog = dog_kernel(Float32(sigma_small), Float32(sigma_large), kernelsize)
+    filtered_stack = convolve(imagestack, dog, use_gpu=kwargs.use_gpu)
+
+    return filtered_stack
+end
+
+
+
+function convolve(imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; use_gpu = false)
 
     # Prepare the weights tensor to match the expected dimensions: height, width, input channels, output channels
-    weights = reshape(dog, size(dog)..., 1, 1)
+    weights = reshape(kernel, size(kernel)..., 1, 1)
 
     # Create a bias tensor filled with zeros
     bias = zeros(Float32, 1)
 
     # Convolution layer with manually specified weights and bias, and identity activation function
     conv_layer = Conv(weights, bias, identity, pad=SamePad())
-    maxpool_layer = MaxPool((kernelsize, kernelsize), pad=SamePad(), stride=(1, 1))
-
+    
     if use_gpu
+        imagestack = imagestack |> gpu
         conv_layer = conv_layer |> gpu
-        maxpool_layer = maxpool_layer |> gpu
     end
 
     filtered_stack = conv_layer(imagestack)
-    maximage = maxpool_layer(filtered_stack) .== filtered_stack
-    localmaximage = maximage .& (filtered_stack .> minval)
-    return Float32.(localmaximage .* filtered_stack |> cpu)
+    return filtered_stack
 end
+
+
+
