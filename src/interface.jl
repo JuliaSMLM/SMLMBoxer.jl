@@ -64,7 +64,8 @@ function getboxes(; kwargs...)
       CUDA.device!(best_device)
 
       # Check the size of the image stack
-      memory_required = sizeof(imagestack) * 4 # 4x for the filtered stack, coords, and boxstack
+      n_copies = 3 # 3x for the filtered stack, coords, and boxstack
+      memory_required = sizeof(imagestack) * n_copies
 
       if memory_required <= max_free_mem
           # If the image stack fits in memory, perform the operation on the whole stack
@@ -72,22 +73,21 @@ function getboxes(; kwargs...)
           coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
       else
           # If the image stack is too big, split it into smaller batches and process each batch separately
-          batch_size = Int(max_free_mem / memory_required)
-          n_batches = Int(ceil(length(imagestack) / batch_size))
+          memory_required_per_frame = size(imagestack, 1)*size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
+          # println("Memory required per frame: ", memory_required_per_frame / 1024^3, " GB\n")
+          batch_size = Int(floor(max_free_mem / memory_required_per_frame))
 
-          filtered_stack = similar(imagestack)
-          coords = []
+          n_images = size(imagestack, 4)
+          n_batches = Int(ceil(n_images / batch_size))
+          
+          coords = Vector{Matrix{Float32}}(undef, 0)
 
           for i in 1:n_batches
               start_idx = (i-1)*batch_size + 1
-              end_idx = min(i*batch_size, length(imagestack))
-
-              batch = imagestack[start_idx:end_idx] |> gpu
-
+              end_idx = min(i*batch_size, n_images)
+              batch = imagestack[:, :,:, start_idx:end_idx] |> gpu
               filtered_batch = dog_filter(batch, args)
-              coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
-
-              filtered_stack[start_idx:end_idx] = filtered_batch |> cpu
+              coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=args.use_gpu)    
               append!(coords, coords_batch)
           end
       end
@@ -97,7 +97,7 @@ function getboxes(; kwargs...)
       filtered_stack = dog_filter(imagestack, args)
       coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
   end
-
+  
   maxcoords = removeoverlap(coords, args)
   boxstack, boxcoords = getboxstack(imagestack, maxcoords, args)
 
