@@ -1,7 +1,7 @@
 name = "SMLMBoxer"
 uuid = "a7d3b33b-b840-4f8e-b556-99be03134090"
 authors = ["klidke@unm.edu"]
-version = "1.0.0-DEV"
+version = "0.1.0"
 
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
