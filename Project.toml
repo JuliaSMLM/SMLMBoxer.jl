@@ -9,9 +9,9 @@ Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 
 [compat]
+CUDA = "4, 5"
 Flux = "0.14"
 cuDNN = "1"
-CUDA = "4"
 julia = "1.9"
 
 [extras]
