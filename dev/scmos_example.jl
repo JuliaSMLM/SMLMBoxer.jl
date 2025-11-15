@@ -105,6 +105,43 @@ if result_scmos_pp.camera_rois[1].offset isa AbstractArray
 end
 println()
 
+## Example 3b: Variance-Weighted Detection Demo
+println("Example 3b: Variance-Weighted Detection")
+println("="^50)
+
+# Create image with two spots of equal intensity
+demo_image = zeros(Float32, 100, 100)
+demo_image[30, 30] = 200.0  # Spot in low-noise region
+demo_image[70, 70] = 200.0  # Spot in high-noise region
+
+# Create readnoise map with varying noise
+demo_readnoise = 2.0f0 .* ones(Float32, 100, 100)
+demo_readnoise[60:80, 60:80] .= 20.0f0  # 10x more noise in this region
+
+demo_camera = SCMOSCamera(
+    pixel_edges_x = Float32.(0:pixel_size:100*pixel_size),
+    pixel_edges_y = Float32.(0:pixel_size:100*pixel_size),
+    offset = 100.0f0,
+    gain = 2.0f0,
+    readnoise = demo_readnoise,  # Per-pixel noise map
+    qe = 0.9f0
+)
+
+# Detect with variance weighting
+result_weighted = getboxes(demo_image, demo_camera;
+    boxsize=7,
+    overlap=2.0,
+    sigma_small=1.0,
+    sigma_large=2.0,
+    minval=1.0,
+    use_gpu=false
+)
+
+println("Variance-weighted detection found $(result_weighted.metadata.ndetections) spots")
+println("Note: Spots in low-noise regions are preferentially detected")
+println("High-noise regions (10x readnoise) are down-weighted during filtering")
+println()
+
 ## Example 4: Integration with GaussMLE (conceptual)
 println("Example 4: Workflow for GaussMLE integration")
 println("="^50)

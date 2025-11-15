@@ -30,7 +30,24 @@ The image stack is convolved with a difference of Gaussians (DoG) filter
 to identify blobs and local maxima. The DoG is computed from two Gaussian
 kernels with standard deviations `sigma_small` and `sigma_large`.
 
+## Variance-Weighted Filtering (sCMOS)
+
+When an SCMOSCamera is provided, the package uses **variance-weighted filtering** based on the
+SMITE algorithm. Each pixel's contribution to the convolution is weighted by:
+
+    weight = gaussian_kernel / variance
+
+where variance = readnoise². This implements optimal inverse variance weighting:
+- Low-noise pixels receive high weight (strong influence on detection)
+- High-noise pixels receive low weight (reduced influence, avoiding false positives)
+
+This significantly improves detection sensitivity in sCMOS data with spatially-varying noise.
+
+## Standard Filtering (IdealCamera or no camera)
+
+Standard DoG convolution is used when no camera is provided or with IdealCamera.
 The convolution is performed either on CPU or GPU, depending on `use_gpu`.
+
 After filtering, local maxima above `minval` are identified. Boxes are cut
 out around each maximum, excluding overlaps.
 

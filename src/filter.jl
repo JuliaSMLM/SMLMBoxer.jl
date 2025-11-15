@@ -76,22 +76,140 @@ end
     dog_filter(imagestack, args)
 
 Apply DoG filter to imagestack based on args.
+Uses variance-weighted filtering if sCMOS camera is provided.
 
 # Arguments
-- `imagestack`: Input array of image data 
-- `args`: Arguments with sigma values  
+- `imagestack`: Input array of image data
+- `args`: Arguments with sigma values and camera
 
 # Returns
-- `filtered_stack`: Filtered image stack 
+- `filtered_stack`: Filtered image stack
 """
 function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs)
-    
+
     sigma_small = args.sigma_small
     sigma_large = args.sigma_large
-    dog = dog_kernel(Float32(sigma_small), Float32(sigma_large))
-    filtered_stack = convolve(imagestack, dog, use_gpu=args.use_gpu)
+
+    # Check if we have an sCMOS camera with variance information
+    if args.camera isa SCMOSCamera
+        # Use variance-weighted DoG filtering
+        filtered_stack = dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args)
+    else
+        # Standard DoG filtering (no variance weighting)
+        dog = dog_kernel(Float32(sigma_small), Float32(sigma_large))
+        filtered_stack = convolve(imagestack, dog, use_gpu=args.use_gpu)
+    end
 
     return filtered_stack
+end
+
+"""
+    dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args)
+
+Apply variance-weighted DoG filter using sCMOS variance map.
+Implements SMITE-style inverse variance weighting during convolution.
+
+# Arguments
+- `imagestack`: Input image data (rows, cols, 1, frames)
+- `sigma_small`: Sigma for small Gaussian
+- `sigma_large`: Sigma for large Gaussian
+- `args`: GetBoxesArgs with camera
+
+# Returns
+- `filtered_stack`: Variance-weighted filtered image
+"""
+function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
+                                       sigma_small::Real,
+                                       sigma_large::Real,
+                                       args::GetBoxesArgs)
+    # Get image dimensions (rows, cols, 1, frames)
+    nrows, ncols, _, nframes = size(imagestack)
+
+    # Get variance map from camera (variance = readnoise²)
+    variance_map = get_variance_map(args.camera, (nrows, ncols))
+
+    # Apply small Gaussian with variance weighting
+    filtered_small = convolve_variance_weighted(imagestack, variance_map,
+                                                Float32(sigma_small), args.use_gpu)
+
+    # Apply large Gaussian with variance weighting
+    filtered_large = convolve_variance_weighted(imagestack, variance_map,
+                                                Float32(sigma_large), args.use_gpu)
+
+    # Difference of Gaussians
+    filtered_stack = filtered_small .- filtered_large
+
+    return filtered_stack
+end
+
+"""
+    convolve_variance_weighted(imagestack, variance_map, sigma, use_gpu)
+
+Apply variance-weighted Gaussian convolution.
+Each pixel's contribution is weighted by gaussian_kernel / variance.
+
+# Arguments
+- `imagestack`: Input image (rows, cols, 1, frames)
+- `variance_map`: Variance at each pixel (rows, cols)
+- `sigma`: Gaussian sigma
+- `use_gpu`: Use GPU if available
+
+# Returns
+- Variance-weighted filtered image
+"""
+function convolve_variance_weighted(imagestack::AbstractArray{T},
+                                    variance_map::AbstractMatrix{T},
+                                    sigma::Float32,
+                                    use_gpu::Bool) where T<:Real
+    nrows, ncols, _, nframes = size(imagestack)
+
+    # Create output array
+    filtered = similar(imagestack)
+
+    # Gaussian kernel window size
+    winsize = Int(ceil(3 * sigma))
+
+    # Process each frame
+    for frame in 1:nframes
+        # Extract 2D image for this frame
+        img = @view imagestack[:, :, 1, frame]
+        out = @view filtered[:, :, 1, frame]
+
+        # Variance-weighted 2D Gaussian convolution
+        for i in 1:nrows
+            for j in 1:ncols
+                # Window bounds
+                row_start = max(1, i - winsize)
+                row_end = min(nrows, i + winsize)
+                col_start = max(1, j - winsize)
+                col_end = min(ncols, j + winsize)
+
+                weightsum = zero(T)
+                varsum = zero(T)
+
+                # Convolve with inverse variance weighting (SMITE approach)
+                for ii in row_start:row_end
+                    for jj in col_start:col_end
+                        # Gaussian weight
+                        dist_sq = Float32((ii-i)^2 + (jj-j)^2)
+                        gauss_weight = exp(-dist_sq / (2 * sigma^2))
+
+                        # Inverse variance weight
+                        inv_var_weight = gauss_weight / variance_map[ii, jj]
+
+                        # Accumulate
+                        varsum += inv_var_weight
+                        weightsum += inv_var_weight * img[ii, jj]
+                    end
+                end
+
+                # Normalized result
+                out[i, j] = weightsum / varsum
+            end
+        end
+    end
+
+    return filtered
 end
 
 

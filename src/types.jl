@@ -74,3 +74,35 @@ function extract_camera_roi(camera::SCMOSCamera{T}, row_range, col_range) where 
         qe = qe
     )
 end
+
+"""
+    get_variance_map(camera::AbstractCamera, imagesize)
+
+Compute variance map from camera calibration.
+
+# Arguments
+- `camera`: Camera object with noise calibration
+- `imagesize`: Tuple of (nrows, ncols) for the image
+
+# Returns
+- Variance map (variance = readnoise²) matching image dimensions
+"""
+function get_variance_map(camera::IdealCamera{T}, imagesize::Tuple{Int,Int}) where T
+    # IdealCamera has no readnoise, return uniform variance of 1.0
+    return ones(T, imagesize)
+end
+
+function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int,Int}) where T
+    nrows, ncols = imagesize
+
+    if camera.readnoise isa AbstractArray
+        # Per-pixel readnoise map: variance = readnoise²
+        variance_map = camera.readnoise .^ 2
+        # Ensure it matches the image size
+        @assert size(variance_map) == imagesize "Readnoise map size $(size(variance_map)) doesn't match image size $imagesize"
+        return variance_map
+    else
+        # Scalar readnoise: uniform variance
+        return fill(T(camera.readnoise^2), imagesize)
+    end
+end

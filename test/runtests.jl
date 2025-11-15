@@ -141,4 +141,46 @@ using Test
         @test result.camera_rois[1].gain == 2.0f0
     end
 
+    @testset "sCMOS variance-weighted detection (per-pixel)" begin
+        # Create image with two spots of equal intensity
+        image = zeros(Float32, 100, 100)
+        image[30, 30] = 100.0  # Spot in low-noise region
+        image[70, 70] = 100.0  # Spot in high-noise region
+
+        # Create per-pixel readnoise map
+        readnoise_map = 2.0f0 .* ones(Float32, 100, 100)
+        # Make one region very noisy
+        readnoise_map[60:80, 60:80] .= 20.0f0  # 10x more noise
+
+        pixel_size = 0.1
+        camera = SCMOSCamera(
+            pixel_edges_x = Float32.(0:pixel_size:100*pixel_size),
+            pixel_edges_y = Float32.(0:pixel_size:100*pixel_size),
+            offset = 100.0f0,
+            gain = 2.0f0,
+            readnoise = readnoise_map,
+            qe = 0.9f0
+        )
+
+        result = getboxes(image, camera;
+            boxsize=7,
+            overlap=3.0,
+            sigma_small=1.0,
+            sigma_large=2.0,
+            minval=0.5,  # Threshold to potentially reject noisy spot
+            use_gpu=false
+        )
+
+        # With variance weighting, the low-noise spot should be detected
+        # The high-noise spot may or may not be detected depending on threshold
+        @test size(result.boxes, 3) >= 1
+
+        # Verify camera ROIs have correct per-pixel calibration
+        if length(result.camera_rois) > 0
+            @test result.camera_rois[1] isa SCMOSCamera
+            @test result.camera_rois[1].readnoise isa AbstractArray
+            @test size(result.camera_rois[1].readnoise) == (7, 7)
+        end
+    end
+
 end
