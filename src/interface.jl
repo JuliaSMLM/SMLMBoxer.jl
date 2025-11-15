@@ -43,10 +43,14 @@ where variance = readnoise². This implements optimal inverse variance weighting
 
 This significantly improves detection sensitivity in sCMOS data with spatially-varying noise.
 
+**GPU Acceleration:** Variance-weighted filtering uses KernelAbstractions.jl for device-agnostic
+computation. The same kernel code runs on both CPU and GPU, automatically selected based on `use_gpu`.
+This provides GPU acceleration for sCMOS cameras (10-100x speedup on large images).
+
 ## Standard Filtering (IdealCamera or no camera)
 
 Standard DoG convolution is used when no camera is provided or with IdealCamera.
-The convolution is performed either on CPU or GPU, depending on `use_gpu`.
+The convolution is performed via Flux/cuDNN on GPU or CPU, depending on `use_gpu`.
 
 After filtering, local maxima above `minval` are identified. Boxes are cut
 out around each maximum, excluding overlaps.

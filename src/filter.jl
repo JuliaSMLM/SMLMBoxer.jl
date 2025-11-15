@@ -143,10 +143,63 @@ function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
 end
 
 """
+    variance_weighted_gaussian_kernel!(output, input, variance, sigma, winsize)
+
+KernelAbstractions kernel for variance-weighted Gaussian convolution.
+Implements SMITE-style inverse variance weighting.
+
+This follows the same KernelAbstractions pattern used in GaussMLE.jl (kernel-abstract branch)
+for seamless CPU/GPU execution and consistent API across JuliaSMLM packages.
+
+# Arguments
+- `output`: Output array (nrows, ncols)
+- `input`: Input array (nrows, ncols)
+- `variance`: Variance map (nrows, ncols)
+- `sigma`: Gaussian sigma
+- `winsize`: Window size (pixels)
+
+# Note
+Same kernel code runs on CPU (via CPU() backend) or GPU (via CUDABackend()).
+Backend is selected automatically based on use_gpu parameter.
+"""
+@kernel function variance_weighted_gaussian_kernel!(output, input, variance, sigma, winsize)
+    i, j = @index(Global, NTuple)
+    nrows, ncols = @ndrange()
+
+    # Window bounds
+    row_start = max(1, i - winsize)
+    row_end = min(nrows, i + winsize)
+    col_start = max(1, j - winsize)
+    col_end = min(ncols, j + winsize)
+
+    # Accumulate variance-weighted sum
+    weightsum = zero(eltype(input))
+    varsum = zero(eltype(variance))
+
+    for ii in row_start:row_end
+        for jj in col_start:col_end
+            # Gaussian weight
+            dist_sq = Float32((ii-i)^2 + (jj-j)^2)
+            gauss_weight = exp(-dist_sq / (2 * sigma^2))
+
+            # Inverse variance weight
+            inv_var_weight = gauss_weight / variance[ii, jj]
+
+            # Accumulate
+            varsum += inv_var_weight
+            weightsum += inv_var_weight * input[ii, jj]
+        end
+    end
+
+    # Normalized result
+    output[i, j] = weightsum / varsum
+end
+
+"""
     convolve_variance_weighted(imagestack, variance_map, sigma, use_gpu)
 
-Apply variance-weighted Gaussian convolution.
-Each pixel's contribution is weighted by gaussian_kernel / variance.
+Apply variance-weighted Gaussian convolution using KernelAbstractions.
+Device-agnostic: works on CPU and GPU with same code.
 
 # Arguments
 - `imagestack`: Input image (rows, cols, 1, frames)
@@ -169,44 +222,36 @@ function convolve_variance_weighted(imagestack::AbstractArray{T},
     # Gaussian kernel window size
     winsize = Int(ceil(3 * sigma))
 
-    # Process each frame
+    # Select backend: GPU or CPU
+    if use_gpu && CUDA.functional()
+        backend = CUDABackend()
+        # Transfer data to GPU
+        imagestack_dev = CuArray(imagestack)
+        variance_dev = CuArray(variance_map)
+        filtered_dev = CuArray(filtered)
+    else
+        backend = CPU()
+        imagestack_dev = imagestack
+        variance_dev = variance_map
+        filtered_dev = filtered
+    end
+
+    # Launch kernel for each frame
+    kernel! = variance_weighted_gaussian_kernel!(backend)
+
     for frame in 1:nframes
-        # Extract 2D image for this frame
-        img = @view imagestack[:, :, 1, frame]
-        out = @view filtered[:, :, 1, frame]
+        # Get views for this frame
+        input_frame = @view imagestack_dev[:, :, 1, frame]
+        output_frame = @view filtered_dev[:, :, 1, frame]
 
-        # Variance-weighted 2D Gaussian convolution
-        for i in 1:nrows
-            for j in 1:ncols
-                # Window bounds
-                row_start = max(1, i - winsize)
-                row_end = min(nrows, i + winsize)
-                col_start = max(1, j - winsize)
-                col_end = min(ncols, j + winsize)
+        # Launch kernel
+        kernel!(output_frame, input_frame, variance_dev, sigma, winsize, ndrange=(nrows, ncols))
+    end
 
-                weightsum = zero(T)
-                varsum = zero(T)
-
-                # Convolve with inverse variance weighting (SMITE approach)
-                for ii in row_start:row_end
-                    for jj in col_start:col_end
-                        # Gaussian weight
-                        dist_sq = Float32((ii-i)^2 + (jj-j)^2)
-                        gauss_weight = exp(-dist_sq / (2 * sigma^2))
-
-                        # Inverse variance weight
-                        inv_var_weight = gauss_weight / variance_map[ii, jj]
-
-                        # Accumulate
-                        varsum += inv_var_weight
-                        weightsum += inv_var_weight * img[ii, jj]
-                    end
-                end
-
-                # Normalized result
-                out[i, j] = weightsum / varsum
-            end
-        end
+    # Wait for completion and transfer back if GPU
+    if use_gpu && CUDA.functional()
+        KernelAbstractions.synchronize(backend)
+        filtered = Array(filtered_dev)
     end
 
     return filtered

@@ -106,7 +106,7 @@ end
 println()
 
 ## Example 3b: Variance-Weighted Detection Demo
-println("Example 3b: Variance-Weighted Detection")
+println("Example 3b: Variance-Weighted Detection (CPU)")
 println("="^50)
 
 # Create image with two spots of equal intensity
@@ -127,8 +127,8 @@ demo_camera = SCMOSCamera(
     qe = 0.9f0
 )
 
-# Detect with variance weighting
-result_weighted = getboxes(demo_image, demo_camera;
+# Detect with variance weighting (CPU)
+result_weighted_cpu = getboxes(demo_image, demo_camera;
     boxsize=7,
     overlap=2.0,
     sigma_small=1.0,
@@ -137,9 +137,33 @@ result_weighted = getboxes(demo_image, demo_camera;
     use_gpu=false
 )
 
-println("Variance-weighted detection found $(result_weighted.metadata.ndetections) spots")
+println("Variance-weighted detection (CPU) found $(result_weighted_cpu.metadata.ndetections) spots")
 println("Note: Spots in low-noise regions are preferentially detected")
 println("High-noise regions (10x readnoise) are down-weighted during filtering")
+println()
+
+## Example 3c: GPU Accelerated sCMOS Detection (if available)
+println("Example 3c: GPU Accelerated sCMOS Detection")
+println("="^50)
+
+if CUDA.functional()
+    # Same detection but with GPU acceleration via KernelAbstractions
+    result_weighted_gpu = getboxes(demo_image, demo_camera;
+        boxsize=7,
+        overlap=2.0,
+        sigma_small=1.0,
+        sigma_large=2.0,
+        minval=1.0,
+        use_gpu=true  # KernelAbstractions backend automatically selects GPU
+    )
+
+    println("Variance-weighted detection (GPU) found $(result_weighted_gpu.metadata.ndetections) spots")
+    println("GPU acceleration via KernelAbstractions.jl")
+    println("Same kernel code runs on CPU/GPU (device-agnostic)")
+else
+    println("CUDA not available - GPU acceleration disabled")
+    println("Install CUDA.jl and have compatible GPU for GPU support")
+end
 println()
 
 ## Example 4: Integration with GaussMLE (conceptual)
