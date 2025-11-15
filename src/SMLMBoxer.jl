@@ -2,6 +2,7 @@ module SMLMBoxer
 
 using Flux
 using CUDA
+using SMLMData
 
 export getboxes 
 

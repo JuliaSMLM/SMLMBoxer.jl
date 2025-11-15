@@ -1,43 +1,72 @@
 """
-    getboxes(; kwargs...)
+    getboxes(imagestack, camera=nothing; kwargs...)
 
 Detect particles/blobs in a multidimensional image stack and return
-coordinates and boxed regions centered around local maxima. 
+coordinates and boxed regions centered around local maxima.
 
 # Arguments
 - `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
-- `boxsize::Int`: Size of the box to cut out around each local maximum (pixels).  
-- `overlap::Real`: Amount of overap allowed between boxes (pixels). 
-- `sigma_small::Real`: Sigma for small Gaussian blur kernel (pixels). 
+- `camera::Union{AbstractCamera,Nothing}`: Optional camera object (IdealCamera or SCMOSCamera) from SMLMData.
+  If provided, enables micron coordinate conversion and camera ROI extraction.
+- `boxsize::Int`: Size of the box to cut out around each local maximum (pixels).
+- `overlap::Real`: Amount of overlap allowed between boxes (pixels).
+- `sigma_small::Real`: Sigma for small Gaussian blur kernel (pixels).
 - `sigma_large::Real`: Sigma for large Gaussian blur kernel (pixels).
-- `minval::Real`: Minimum value to consider as a local maximum.  
-- `use_gpu::Bool`: Perform convolution and local max finding on GPU. 
+- `minval::Real`: Minimum value to consider as a local maximum.
+- `use_gpu::Bool`: Perform convolution and local max finding on GPU.
 
 # Returns
-- `boxstack::AbstractArray{<:Real}`: Array with dimensions (boxsize, boxsize, nboxes).
-  Each image in the stack contains a small subregion from imagestack centered around a local maximum
-  - `boxcoords::Matrix{Float32}`: Coordinates of boxes N x (row, col, frame).
-  - `maxcoords::Matrix{Float32}`: Coordinates of boxes N x (row, col, frame).
+A NamedTuple with the following fields:
+- `boxes`: Array with dimensions (boxsize, boxsize, nboxes) containing image patches
+- `coords_pixels`: N×3 matrix of detection centers (row, col, frame) in pixels
+- `coords_microns`: N×2 matrix of detection centers (x, y) in microns (only if camera provided)
+- `boxcoords`: N×3 matrix of box upper-left corners (row, col, frame) in pixels
+- `camera_rois`: Vector of camera ROIs for each box (only if camera provided)
+- `metadata`: Additional information (number of detections, etc.)
 
 # Details on filtering
 
 The image stack is convolved with a difference of Gaussians (DoG) filter
 to identify blobs and local maxima. The DoG is computed from two Gaussian
-kernels with standard deviations `sigma_small` and `sigma_large`.  
+kernels with standard deviations `sigma_small` and `sigma_large`.
 
 The convolution is performed either on CPU or GPU, depending on `use_gpu`.
 After filtering, local maxima above `minval` are identified. Boxes are cut
 out around each maximum, excluding overlaps.
 
-# Examples  
+# Examples
 ```julia
-boxes, boxcoords, maxcoords = getboxes(imagestack, boxsize=7, overlap=2.0,  
-                         sigma_small=1.0, sigma_large=2.0)
+# Without camera (backward compatible)
+result = getboxes(imagestack; boxsize=7, overlap=2.0, sigma_small=1.0, sigma_large=2.0)
+boxes = result.boxes
+coords = result.coords_pixels
+
+# With camera (enables micron coordinates and camera ROIs)
+camera = IdealCamera(pixel_edges_x=0:0.1:25.6, pixel_edges_y=0:0.1:25.6)
+result = getboxes(imagestack, camera; boxsize=7, overlap=2.0)
+boxes = result.boxes
+coords_microns = result.coords_microns
+camera_rois = result.camera_rois
 ```
 """
-function getboxes(; kwargs...)
+function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}=nothing; kwargs...)
+  # Create args with camera
+  args = GetBoxesArgs(; imagestack=imagestack, camera=camera, kwargs...)
+  return _getboxes_impl(args)
+end
 
+# Legacy keyword-only interface for backward compatibility
+function getboxes(; kwargs...)
   args = GetBoxesArgs(; kwargs...)
+  return _getboxes_impl(args)
+end
+
+"""
+    _getboxes_impl(args::GetBoxesArgs)
+
+Internal implementation of getboxes that does the actual work.
+"""
+function _getboxes_impl(args::GetBoxesArgs)
 
   imagestack = reshape_for_flux(args.imagestack)
 
@@ -99,10 +128,32 @@ function getboxes(; kwargs...)
   end
   
   maxcoords = removeoverlap(coords, args)
-  boxstack, boxcoords = getboxstack(imagestack, maxcoords, args)
+  boxstack, boxcoords, camera_rois = getboxstack(imagestack, maxcoords, args)
 
-  # Return the box stack and the coords  
-  return boxstack, boxcoords, maxcoords
+  # Convert coordinates to microns if camera is provided
+  coords_microns = if args.camera !== nothing
+    pixels_to_microns(maxcoords[:, 1:2], args.camera)
+  else
+    nothing
+  end
+
+  # Build metadata
+  ndetections = size(maxcoords, 1)
+  metadata = (
+    ndetections = ndetections,
+    boxsize = args.boxsize,
+    has_camera = args.camera !== nothing
+  )
+
+  # Return as NamedTuple
+  return (
+    boxes = boxstack,
+    coords_pixels = maxcoords,
+    coords_microns = coords_microns,
+    boxcoords = boxcoords,
+    camera_rois = camera_rois,
+    metadata = metadata
+  )
 end
 
 
