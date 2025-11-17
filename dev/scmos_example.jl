@@ -17,10 +17,11 @@ for i in 1:10
 end
 
 # Create IdealCamera
-pixel_size = 0.1  # microns/pixel
+pixel_size = 0.1f0  # microns/pixel
 camera = IdealCamera(
-    pixel_edges_x = Float32.(0:pixel_size:256*pixel_size),
-    pixel_edges_y = Float32.(0:pixel_size:256*pixel_size)
+    1:256,  # pixel range x
+    1:256,  # pixel range y
+    pixel_size  # pixel size
 )
 
 # Detect boxes
@@ -45,12 +46,13 @@ println("="^50)
 
 # Create sCMOS camera with uniform calibration
 camera_scmos = SCMOSCamera(
-    pixel_edges_x = Float32.(0:pixel_size:256*pixel_size),
-    pixel_edges_y = Float32.(0:pixel_size:256*pixel_size),
-    offset = 100.0f0,      # ADU
-    gain = 2.0f0,          # e-/ADU
-    readnoise = 5.0f0,     # e- RMS
-    qe = 0.9f0             # quantum efficiency
+    256,  # npixels_x
+    256,  # npixels_y
+    pixel_size,  # pixel size
+    5.0f0,  # readnoise (e- RMS)
+    offset = 100.0f0,  # ADU
+    gain = 2.0f0,      # e-/ADU
+    qe = 0.9f0         # quantum efficiency
 )
 
 result_scmos = getboxes(image, camera_scmos;
@@ -79,11 +81,12 @@ readnoise_map = 5.0f0 .+ 0.5f0 .* rand(Float32, 256, 256)   # Varying read noise
 qe_map = 0.9f0 .+ 0.05f0 .* (rand(Float32, 256, 256) .- 0.5f0)  # Varying QE
 
 camera_scmos_pp = SCMOSCamera(
-    pixel_edges_x = Float32.(0:pixel_size:256*pixel_size),
-    pixel_edges_y = Float32.(0:pixel_size:256*pixel_size),
+    256,  # npixels_x
+    256,  # npixels_y
+    pixel_size,  # pixel size
+    readnoise_map,  # per-pixel readnoise
     offset = offset_map,
     gain = gain_map,
-    readnoise = readnoise_map,
     qe = qe_map
 )
 
@@ -119,11 +122,12 @@ demo_readnoise = 2.0f0 .* ones(Float32, 100, 100)
 demo_readnoise[60:80, 60:80] .= 20.0f0  # 10x more noise in this region
 
 demo_camera = SCMOSCamera(
-    pixel_edges_x = Float32.(0:pixel_size:100*pixel_size),
-    pixel_edges_y = Float32.(0:pixel_size:100*pixel_size),
+    100,  # npixels_x
+    100,  # npixels_y
+    pixel_size,  # pixel size
+    demo_readnoise,  # Per-pixel noise map
     offset = 100.0f0,
     gain = 2.0f0,
-    readnoise = demo_readnoise,  # Per-pixel noise map
     qe = 0.9f0
 )
 

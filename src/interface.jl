@@ -63,7 +63,7 @@ boxes = result.boxes
 coords = result.coords_pixels
 
 # With camera (enables micron coordinates and camera ROIs)
-camera = IdealCamera(pixel_edges_x=0:0.1:25.6, pixel_edges_y=0:0.1:25.6)
+camera = IdealCamera(1:256, 1:256, 0.1f0)  # npixels_x, npixels_y, pixel_size
 result = getboxes(imagestack, camera; boxsize=7, overlap=2.0)
 boxes = result.boxes
 coords_microns = result.coords_microns

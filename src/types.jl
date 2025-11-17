@@ -52,9 +52,9 @@ Extract a camera ROI with calibration data for the specified pixel region.
 - Camera object of the same type with ROI calibration data
 """
 function extract_camera_roi(camera::IdealCamera{T}, row_range, col_range) where T
-    return IdealCamera{T}(
-        pixel_edges_x = camera.pixel_edges_x[col_range],
-        pixel_edges_y = camera.pixel_edges_y[row_range]
+    return IdealCamera(
+        camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
+        camera.pixel_edges_y[row_range]   # pixel_edges_y (positional)
     )
 end
 
@@ -65,12 +65,12 @@ function extract_camera_roi(camera::SCMOSCamera{T}, row_range, col_range) where 
     readnoise = camera.readnoise isa AbstractArray ? camera.readnoise[row_range[1:end-1], col_range[1:end-1]] : camera.readnoise
     qe = camera.qe isa AbstractArray ? camera.qe[row_range[1:end-1], col_range[1:end-1]] : camera.qe
 
-    return SCMOSCamera{T}(
-        pixel_edges_x = camera.pixel_edges_x[col_range],
-        pixel_edges_y = camera.pixel_edges_y[row_range],
+    return SCMOSCamera(
+        camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
+        camera.pixel_edges_y[row_range],  # pixel_edges_y (positional)
+        readnoise = readnoise,
         offset = offset,
         gain = gain,
-        readnoise = readnoise,
         qe = qe
     )
 end

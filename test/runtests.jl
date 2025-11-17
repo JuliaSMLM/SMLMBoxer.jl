@@ -68,10 +68,11 @@ using Test
         image[30, 60] = 10
 
         # Create an IdealCamera
-        pixel_size = 0.1  # microns
+        pixel_size = 0.1f0  # microns
         camera = IdealCamera(
-            pixel_edges_x = Float32.(0:pixel_size:100*pixel_size),
-            pixel_edges_y = Float32.(0:pixel_size:100*pixel_size)
+            1:100,  # pixel range x
+            1:100,  # pixel range y
+            pixel_size  # pixel size
         )
 
         # Get boxes with camera
@@ -113,13 +114,14 @@ using Test
         image[20, 50] = 10
 
         # Create SCMOSCamera with scalar parameters
-        pixel_size = 0.1
+        pixel_size = 0.1f0
         camera = SCMOSCamera(
-            pixel_edges_x = Float32.(0:pixel_size:100*pixel_size),
-            pixel_edges_y = Float32.(0:pixel_size:100*pixel_size),
+            100,  # npixels_x
+            100,  # npixels_y
+            pixel_size,  # pixel size
+            5.0f0,  # readnoise
             offset = 100.0f0,
             gain = 2.0f0,
-            readnoise = 5.0f0,
             qe = 0.9f0
         )
 
@@ -152,13 +154,14 @@ using Test
         # Make one region very noisy
         readnoise_map[60:80, 60:80] .= 20.0f0  # 10x more noise
 
-        pixel_size = 0.1
+        pixel_size = 0.1f0
         camera = SCMOSCamera(
-            pixel_edges_x = Float32.(0:pixel_size:100*pixel_size),
-            pixel_edges_y = Float32.(0:pixel_size:100*pixel_size),
+            100,  # npixels_x
+            100,  # npixels_y
+            pixel_size,  # pixel size
+            readnoise_map,  # per-pixel readnoise
             offset = 100.0f0,
             gain = 2.0f0,
-            readnoise = readnoise_map,
             qe = 0.9f0
         )
 
