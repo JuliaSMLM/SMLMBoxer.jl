@@ -1,5 +1,8 @@
 using SMLMBoxer
 using SMLMData
+using CUDA
+using Statistics
+using Printf
 using Test
 
 @testset "SMLMBoxer.jl" begin
@@ -184,4 +187,49 @@ using Test
         end
     end
 
+end
+
+# Local performance benchmark (only runs in local environment, not on CI)
+println()
+println("="^70)
+if get(ENV, "CI", "false") == "false"
+    println("Local environment detected - running performance benchmark")
+    println("="^70)
+    include("local_performance_benchmark.jl")
+
+    # Run the benchmark
+    @testset "Local Performance Benchmark" begin
+        results = run_comprehensive_benchmark()
+        @test results !== nothing
+        @test !isempty(results)
+
+        # Validate that we got results for each configuration
+        @test length(results) >= 5  # At least 5 test configs
+
+        # Check that throughput values are positive
+        @test all(r -> r.cpu_throughput > 0, results)
+
+        # Check detection accuracy is reasonable (>50% of expected spots)
+        for r in results
+            accuracy = r.cpu_found / r.expected_spots
+            @test accuracy > 0.5
+        end
+
+        # If GPU available, check GPU results
+        if CUDA.functional()
+            @test all(r -> r.gpu_throughput > 0, results)
+            @test all(r -> r.speedup > 0, results)
+
+            # GPU should generally be faster (speedup > 1.0) for larger images
+            large_results = filter(r -> r.config.nx >= 256, results)
+            if !isempty(large_results)
+                @test any(r -> r.speedup > 1.0, large_results)
+            end
+        end
+    end
+else
+    println("CI environment detected - skipping performance benchmark")
+    println("To run performance benchmarks, execute tests locally:")
+    println("  julia> using Pkg; Pkg.test(\"SMLMBoxer\")")
+    println("="^70)
 end
