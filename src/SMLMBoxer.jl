@@ -5,6 +5,8 @@ using CUDA
 using KernelAbstractions
 using SMLMData
 
+# Re-export ROIBatch and SingleROI from SMLMData for convenience
+using SMLMData: ROIBatch, SingleROI
 export getboxes, ROIBatch, SingleROI 
 
 include("types.jl")
