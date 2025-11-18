@@ -1,13 +1,13 @@
 """
-    getboxes(imagestack, camera=nothing; kwargs...)
+    getboxes(imagestack, camera=nothing; kwargs...) -> ROIBatch
 
 Detect particles/blobs in a multidimensional image stack and return
-coordinates and boxed regions centered around local maxima.
+ROI batch with location tracking.
 
 # Arguments
 - `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
 - `camera::Union{AbstractCamera,Nothing}`: Optional camera object (IdealCamera or SCMOSCamera) from SMLMData.
-  If provided, enables micron coordinate conversion and camera ROI extraction.
+  If not provided, a default IdealCamera is created.
 - `boxsize::Int`: Size of the box to cut out around each local maximum (pixels).
 - `overlap::Real`: Amount of overlap allowed between boxes (pixels).
 - `sigma_small::Real`: Sigma for small Gaussian blur kernel (pixels).
@@ -16,13 +16,12 @@ coordinates and boxed regions centered around local maxima.
 - `use_gpu::Bool`: Perform convolution and local max finding on GPU.
 
 # Returns
-A NamedTuple with the following fields:
-- `boxes`: Array with dimensions (boxsize, boxsize, nboxes) containing image patches
-- `coords_pixels`: N×3 matrix of detection centers (row, col, frame) in pixels
-- `coords_microns`: N×2 matrix of detection centers (x, y) in microns (only if camera provided)
-- `boxcoords`: N×3 matrix of box upper-left corners (row, col, frame) in pixels
-- `camera_rois`: Vector of camera ROIs for each box (only if camera provided)
-- `metadata`: Additional information (number of detections, etc.)
+`ROIBatch` with the following fields:
+- `data`: ROI stack (boxsize × boxsize × n_rois) containing image patches
+- `corners`: (2 × n_rois) matrix of (x,y) = (col,row) corner positions in camera coordinates
+- `frame_indices`: Vector of frame indices for each ROI
+- `camera`: Camera object (provided or default IdealCamera)
+- `roi_size`: Size of each ROI (square)
 
 # Details on filtering
 
@@ -57,17 +56,21 @@ out around each maximum, excluding overlaps.
 
 # Examples
 ```julia
-# Without camera
-result = getboxes(imagestack; boxsize=7, overlap=2.0, sigma_small=1.0, sigma_large=2.0)
-boxes = result.boxes
-coords = result.coords_pixels
+# Basic usage
+roi_batch = getboxes(imagestack; boxsize=7, overlap=2.0, sigma_small=1.0, sigma_large=2.0)
+boxes = roi_batch.data  # (7 × 7 × n_rois)
+corners = roi_batch.corners  # (2 × n_rois) [x;y] = [col;row]
+frames = roi_batch.frame_indices
 
-# With camera (enables micron coordinates and camera ROIs)
+# With camera for proper coordinate system
 camera = IdealCamera(1:256, 1:256, 0.1f0)  # npixels_x, npixels_y, pixel_size
-result = getboxes(imagestack, camera; boxsize=7, overlap=2.0)
-boxes = result.boxes
-coords_microns = result.coords_microns
-camera_rois = result.camera_rois
+roi_batch = getboxes(imagestack, camera; boxsize=7, overlap=2.0)
+
+# Iterate over ROIs
+for roi in roi_batch
+    # roi is a SingleROI with .data, .corner, .frame_idx
+    process(roi.data)
+end
 ```
 """
 function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}=nothing; kwargs...)
@@ -145,30 +148,32 @@ function _getboxes_impl(args::GetBoxesArgs)
   maxcoords = removeoverlap(coords, args)
   boxstack, boxcoords, camera_rois = getboxstack(imagestack, maxcoords, args)
 
-  # Convert coordinates to microns if camera is provided
-  coords_microns = if args.camera !== nothing
-    pixels_to_microns(maxcoords[:, 1:2], args.camera)
-  else
-    nothing
+  # Create ROIBatch
+  # Convert boxcoords (row, col, frame) to corners (x, y) = (col, row) format
+  n_rois = size(boxstack, 3)
+  corners = Matrix{Int32}(undef, 2, n_rois)
+  frame_indices = Vector{Int32}(undef, n_rois)
+
+  for i in 1:n_rois
+    corners[1, i] = Int32(boxcoords[i, 2])  # x = col
+    corners[2, i] = Int32(boxcoords[i, 1])  # y = row
+    frame_indices[i] = Int32(boxcoords[i, 3])
   end
 
-  # Build metadata
-  ndetections = size(maxcoords, 1)
-  metadata = (
-    ndetections = ndetections,
-    boxsize = args.boxsize,
-    has_camera = args.camera !== nothing
-  )
+  # Use provided camera or create default IdealCamera if none provided
+  camera = if args.camera !== nothing
+    args.camera
+  else
+    # Create minimal IdealCamera with pixel edges matching image size
+    img_rows, img_cols = size(imagestack, 1), size(imagestack, 2)
+    IdealCamera(
+      1:(img_cols+1),  # pixel_edges_x
+      1:(img_rows+1),  # pixel_edges_y
+      1.0f0            # pixel size (arbitrary for default)
+    )
+  end
 
-  # Return as NamedTuple
-  return (
-    boxes = boxstack,
-    coords_pixels = maxcoords,
-    coords_microns = coords_microns,
-    boxcoords = boxcoords,
-    camera_rois = camera_rois,
-    metadata = metadata
-  )
+  return ROIBatch(boxstack, corners, frame_indices, camera)
 end
 
 

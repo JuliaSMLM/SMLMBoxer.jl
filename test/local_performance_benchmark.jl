@@ -111,7 +111,7 @@ function benchmark_getboxes(image; use_gpu=false, nwarmup=WARMUP_ITERATIONS, nru
         t1 = time()
 
         push!(times, t1 - t0)
-        ndetections = result.metadata.ndetections
+        ndetections = length(result)
     end
 
     return median(times), ndetections

@@ -5,7 +5,7 @@ using CUDA
 using KernelAbstractions
 using SMLMData
 
-export getboxes 
+export getboxes, ROIBatch, SingleROI 
 
 include("types.jl")
 include("filter.jl")

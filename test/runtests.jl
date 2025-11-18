@@ -14,7 +14,7 @@ using Test
         image[30, 60] = 10
 
         # Get boxes without camera (positional interface)
-        result = getboxes(image;
+        roi_batch = getboxes(image;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
@@ -23,21 +23,28 @@ using Test
             use_gpu=false
         )
 
-        # Test NamedTuple structure
-        @test haskey(result, :boxes)
-        @test haskey(result, :coords_pixels)
-        @test haskey(result, :metadata)
+        # Test ROIBatch structure
+        @test roi_batch isa ROIBatch
+        @test hasfield(typeof(roi_batch), :data)
+        @test hasfield(typeof(roi_batch), :corners)
+        @test hasfield(typeof(roi_batch), :frame_indices)
+        @test hasfield(typeof(roi_batch), :camera)
 
         # Should detect two peaks
-        @test size(result.boxes) == (5, 5, 2)
+        @test size(roi_batch.data) == (5, 5, 2)
+        @test length(roi_batch) == 2
 
-        # Verify correct box location
-        @test result.coords_pixels[1, :] ≈ [20, 50, 1]
-        @test result.coords_pixels[2, :] ≈ [30, 60, 1]
+        # Verify correct box locations (corners are [x;y] = [col;row] of top-left corner)
+        # For boxsize=5 and center at (row=20, col=50): corner = (50 - 5÷2, 20 - 5÷2) = (48, 18)
+        @test roi_batch.corners[1, 1] == 48  # x (col) of first ROI
+        @test roi_batch.corners[2, 1] == 18  # y (row) of first ROI
+        @test roi_batch.corners[1, 2] == 58  # x (col) of second ROI
+        @test roi_batch.corners[2, 2] == 28  # y (row) of second ROI
+        @test roi_batch.frame_indices[1] == 1
+        @test roi_batch.frame_indices[2] == 1
 
-        # Camera-specific fields should be nothing
-        @test result.coords_microns === nothing
-        @test result.camera_rois === nothing
+        # Default camera should be created
+        @test roi_batch.camera isa IdealCamera
     end
 
     @testset "Overlap removal" begin
@@ -46,7 +53,7 @@ using Test
         image[20, 50] = 20
         image[21, 51] = 10
 
-        result = getboxes(image;
+        roi_batch = getboxes(image;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
@@ -56,10 +63,14 @@ using Test
         )
 
         # Should detect only one peak (overlap removed)
-        @test size(result.boxes) == (5, 5, 1)
+        @test size(roi_batch.data) == (5, 5, 1)
+        @test length(roi_batch) == 1
 
         # Verify correct box location (should keep brighter peak)
-        @test result.coords_pixels[1, :] ≈ [20, 50, 1]
+        # For boxsize=5 and center at (row=20, col=50): corner = (50 - 5÷2, 20 - 5÷2) = (48, 18)
+        @test roi_batch.corners[1, 1] == 48  # x (col)
+        @test roi_batch.corners[2, 1] == 18  # y (row)
+        @test roi_batch.frame_indices[1] == 1
     end
 
     @testset "New API with IdealCamera" begin
@@ -71,13 +82,13 @@ using Test
         # Create an IdealCamera
         pixel_size = 0.1f0  # microns
         camera = IdealCamera(
-            1:100,  # pixel range x
-            1:100,  # pixel range y
+            1:101,  # pixel range x (need 101 edges for 100 pixels)
+            1:101,  # pixel range y
             pixel_size  # pixel size
         )
 
         # Get boxes with camera
-        result = getboxes(image, camera;
+        roi_batch = getboxes(image, camera;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
@@ -87,26 +98,23 @@ using Test
         )
 
         # Should detect two peaks
-        @test size(result.boxes) == (5, 5, 2)
+        @test size(roi_batch.data) == (5, 5, 2)
+        @test length(roi_batch) == 2
 
-        # Check pixel coordinates
-        @test result.coords_pixels[1, :] ≈ [20, 50, 1]
-        @test result.coords_pixels[2, :] ≈ [30, 60, 1]
+        # Check corner positions (top-left corner of ROI)
+        # For boxsize=5 and center at (row=20, col=50): corner = (48, 18)
+        @test roi_batch.corners[1, 1] == 48  # x (col) of first ROI
+        @test roi_batch.corners[2, 1] == 18  # y (row) of first ROI
+        @test roi_batch.corners[1, 2] == 58  # x (col) of second ROI
+        @test roi_batch.corners[2, 2] == 28  # y (row) of second ROI
 
-        # Check micron coordinates exist
-        @test result.coords_microns !== nothing
-        @test size(result.coords_microns) == (2, 2)
+        # Check frame indices
+        @test roi_batch.frame_indices[1] == 1
+        @test roi_batch.frame_indices[2] == 1
 
-        # Verify micron conversion (center of pixel)
-        expected_x1 = (camera.pixel_edges_x[50] + camera.pixel_edges_x[51]) / 2
-        expected_y1 = (camera.pixel_edges_y[20] + camera.pixel_edges_y[21]) / 2
-        @test result.coords_microns[1, 1] ≈ expected_x1
-        @test result.coords_microns[1, 2] ≈ expected_y1
-
-        # Check camera ROIs exist
-        @test result.camera_rois !== nothing
-        @test length(result.camera_rois) == 2
-        @test result.camera_rois[1] isa IdealCamera
+        # Check camera is present and correct type
+        @test roi_batch.camera isa IdealCamera
+        @test roi_batch.camera === camera
     end
 
     @testset "New API with SCMOSCamera (scalar params)" begin
@@ -126,7 +134,7 @@ using Test
             qe = 0.9f0
         )
 
-        result = getboxes(image, camera;
+        roi_batch = getboxes(image, camera;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
@@ -136,12 +144,14 @@ using Test
         )
 
         # Should detect the peak
-        @test size(result.boxes, 3) >= 1
+        @test size(roi_batch.data, 3) >= 1
+        @test length(roi_batch) >= 1
 
-        # Camera ROI should also be SCMOSCamera
-        @test result.camera_rois[1] isa SCMOSCamera
-        @test result.camera_rois[1].offset == 100.0f0
-        @test result.camera_rois[1].gain == 2.0f0
+        # Camera should be SCMOSCamera with correct parameters
+        @test roi_batch.camera isa SCMOSCamera
+        @test roi_batch.camera === camera
+        @test roi_batch.camera.offset == 100.0f0
+        @test roi_batch.camera.gain == 2.0f0
     end
 
     @testset "sCMOS variance-weighted detection (per-pixel)" begin
@@ -166,7 +176,7 @@ using Test
             qe = 0.9f0
         )
 
-        result = getboxes(image, camera;
+        roi_batch = getboxes(image, camera;
             boxsize=7,
             overlap=3.0,
             sigma_small=1.0,
@@ -177,14 +187,13 @@ using Test
 
         # With variance weighting, the low-noise spot should be detected
         # The high-noise spot may or may not be detected depending on threshold
-        @test size(result.boxes, 3) >= 1
+        @test size(roi_batch.data, 3) >= 1
+        @test length(roi_batch) >= 1
 
-        # Verify camera ROIs have correct per-pixel calibration
-        if length(result.camera_rois) > 0
-            @test result.camera_rois[1] isa SCMOSCamera
-            @test result.camera_rois[1].readnoise isa AbstractArray
-            @test size(result.camera_rois[1].readnoise) == (7, 7)
-        end
+        # Verify camera has correct per-pixel calibration
+        @test roi_batch.camera isa SCMOSCamera
+        @test roi_batch.camera.readnoise isa AbstractArray
+        @test size(roi_batch.camera.readnoise) == (100, 100)  # Full image readnoise map
     end
 
 end
