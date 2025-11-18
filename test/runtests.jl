@@ -4,15 +4,14 @@ using Test
 
 @testset "SMLMBoxer.jl" begin
 
-    @testset "Legacy API (keyword-only, no camera)" begin
+    @testset "API without camera" begin
         # Test image with two bright peaks
         image = zeros(Float32, 100, 100)
         image[20, 50] = 10
         image[30, 60] = 10
 
-        # Get boxes using legacy keyword interface
-        result = getboxes(
-            imagestack=image,
+        # Get boxes without camera (positional interface)
+        result = getboxes(image;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
@@ -44,8 +43,7 @@ using Test
         image[20, 50] = 20
         image[21, 51] = 10
 
-        result = getboxes(
-            imagestack=image,
+        result = getboxes(image;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,

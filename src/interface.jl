@@ -57,7 +57,7 @@ out around each maximum, excluding overlaps.
 
 # Examples
 ```julia
-# Without camera (backward compatible)
+# Without camera
 result = getboxes(imagestack; boxsize=7, overlap=2.0, sigma_small=1.0, sigma_large=2.0)
 boxes = result.boxes
 coords = result.coords_pixels
@@ -73,12 +73,6 @@ camera_rois = result.camera_rois
 function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}=nothing; kwargs...)
   # Create args with camera
   args = GetBoxesArgs(; imagestack=imagestack, camera=camera, kwargs...)
-  return _getboxes_impl(args)
-end
-
-# Legacy keyword-only interface for backward compatibility
-function getboxes(; kwargs...)
-  args = GetBoxesArgs(; kwargs...)
   return _getboxes_impl(args)
 end
 
