@@ -1,15 +1,15 @@
-"""  
+"""
    maxima2coords(imagestack)
- 
-Get coordinates of all non-zero pixels in input stack 
+
+Get coordinates of all non-zero pixels in input stack
 
 # Arguments
 - `imagestack`: Input image stack
 
 # Returns
-- `coords`: List of coords for each frame
+- `coords`: List of coords for each frame (always Float32)
 """
-function maxima2coords(imagestack::AbstractArray{Float32})
+function maxima2coords(imagestack::AbstractArray{T}) where T<:Real
 
     nframes = size(imagestack, 4)
     coords = Vector{Matrix{Float32}}(undef, nframes)
