@@ -30,16 +30,15 @@ function genlocalmaximage(imagestack::AbstractArray{<:Real}, kernelsize::Int; mi
     end
 
     if use_gpu && CUDA.functional()
-        # Transfer to GPU
-        imagestack_gpu = CuArray(imagestack)
+        # Transfer to GPU if not already there
+        imagestack_gpu = imagestack isa CuArray ? imagestack : CuArray(imagestack)
 
-        # NNlib.maxpool uses cuDNN on GPU
+        # NNlib.maxpool uses cuDNN on GPU - KEEP RESULT ON GPU
         maxpooled = NNlib.maxpool(imagestack_gpu, poolsize; pad=pad, stride=1)
         maximage = (maxpooled .== imagestack_gpu)
         localmaximage = (maximage .& (imagestack_gpu .> minval)) .* imagestack_gpu
 
-        # Transfer back to CPU
-        return Array(localmaximage)
+        return localmaximage  # Returns CuArray - keep on GPU!
     else
         # NNlib.maxpool CPU implementation
         maxpooled = NNlib.maxpool(imagestack, poolsize; pad=pad, stride=1)

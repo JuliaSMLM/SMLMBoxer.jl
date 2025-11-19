@@ -27,6 +27,7 @@ struct BenchmarkConfig
     ny::Int
     nframes::Int
     nspots_per_frame::Int
+    camera_type::Symbol  # :ideal or :scmos
 end
 
 struct BenchmarkResult
@@ -72,14 +73,14 @@ function create_synthetic_image(nx, ny, nframes, nspots_per_frame; sigma=2.0, in
 end
 
 """
-    benchmark_getboxes(image; use_gpu=false, nwarmup=2, nruns=5)
+    benchmark_getboxes(image, camera; use_gpu=false, nwarmup=2, nruns=5)
 
 Benchmark getboxes with warmup and multiple runs.
 """
-function benchmark_getboxes(image; use_gpu=false, nwarmup=WARMUP_ITERATIONS, nruns=BENCHMARK_RUNS)
+function benchmark_getboxes(image, camera; use_gpu=false, nwarmup=WARMUP_ITERATIONS, nruns=BENCHMARK_RUNS)
     # Warmup
     for _ in 1:nwarmup
-        result = getboxes(image;
+        result = getboxes(image, camera;
             boxsize=7,
             overlap=3.0,
             sigma_small=1.0,
@@ -100,7 +101,7 @@ function benchmark_getboxes(image; use_gpu=false, nwarmup=WARMUP_ITERATIONS, nru
         end
 
         t0 = time()
-        result = getboxes(image;
+        result = getboxes(image, camera;
             boxsize=7,
             overlap=3.0,
             sigma_small=1.0,
@@ -128,13 +129,28 @@ function run_single_benchmark(config::BenchmarkConfig, has_cuda::Bool)
         config.nx, config.ny, config.nframes, config.nspots_per_frame
     )
 
+    # Create camera based on config
+    pixel_size = 0.1f0
+    if config.camera_type == :ideal
+        camera = IdealCamera(1:config.nx, 1:config.ny, pixel_size)
+    elseif config.camera_type == :scmos
+        # Create sCMOS with moderate per-pixel readnoise variation
+        readnoise_map = 3.0f0 .+ 2.0f0 .* rand(Float32, config.nx, config.ny)
+        camera = SCMOSCamera(
+            config.nx, config.ny, pixel_size, readnoise_map,
+            offset=100.0f0, gain=2.0f0, qe=0.9f0
+        )
+    else
+        error("Unknown camera type: $(config.camera_type)")
+    end
+
     # CPU benchmark
-    cpu_time, cpu_found = benchmark_getboxes(image; use_gpu=false)
+    cpu_time, cpu_found = benchmark_getboxes(image, camera; use_gpu=false)
     cpu_throughput = config.nframes / cpu_time
 
     # GPU benchmark
     if has_cuda
-        gpu_time, gpu_found = benchmark_getboxes(image; use_gpu=true)
+        gpu_time, gpu_found = benchmark_getboxes(image, camera; use_gpu=true)
         gpu_throughput = config.nframes / gpu_time
         speedup = cpu_time / gpu_time
     else
@@ -168,38 +184,39 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
 
     # Table header
     if has_cuda
-        println("┌────────────────┬──────────────┬──────────┬──────────┬──────────┬──────────────┬──────────────┬─────────┐")
-        println("│ Configuration  │ Image Size   │ Expected │ CPU      │ GPU      │ CPU          │ GPU          │ Speedup │")
-        println("│                │              │ Spots    │ Found    │ Found    │ (images/sec) │ (images/sec) │         │")
+        println("┌────────────────┬────────┬──────────────┬──────────┬──────────┬──────────┬──────────────┬──────────────┬─────────┐")
+        println("│ Configuration  │ Camera │ Image Size   │ Expected │ CPU      │ GPU      │ CPU          │ GPU          │ Speedup │")
+        println("│                │        │              │ Spots    │ Found    │ Found    │ (images/sec) │ (images/sec) │         │")
     else
-        println("┌────────────────┬──────────────┬──────────┬──────────┬──────────────┐")
-        println("│ Configuration  │ Image Size   │ Expected │ CPU      │ CPU          │")
-        println("│                │              │ Spots    │ Found    │ (images/sec) │")
+        println("┌────────────────┬────────┬──────────────┬──────────┬──────────┬──────────────┐")
+        println("│ Configuration  │ Camera │ Image Size   │ Expected │ CPU      │ CPU          │")
+        println("│                │        │              │ Spots    │ Found    │ (images/sec) │")
     end
 
     if has_cuda
-        println("├────────────────┼──────────────┼──────────┼──────────┼──────────┼──────────────┼──────────────┼─────────┤")
+        println("├────────────────┼────────┼──────────────┼──────────┼──────────┼──────────┼──────────────┼──────────────┼─────────┤")
     else
-        println("├────────────────┼──────────────┼──────────┼──────────┼──────────────┤")
+        println("├────────────────┼────────┼──────────────┼──────────┼──────────┼──────────────┤")
     end
 
     for r in results
         size_str = "$(r.config.nx)×$(r.config.ny)×$(r.config.nframes)"
+        cam_str = r.config.camera_type == :ideal ? "Ideal" : "sCMOS"
 
         if has_cuda
-            @printf("│ %-14s │ %-12s │ %8d │ %8d │ %8d │ %12.2f │ %12.2f │ %6.2fx │\n",
-                    r.config.label, size_str, r.expected_spots, r.cpu_found,
+            @printf("│ %-14s │ %-6s │ %-12s │ %8d │ %8d │ %8d │ %12.2f │ %12.2f │ %6.2fx │\n",
+                    r.config.label, cam_str, size_str, r.expected_spots, r.cpu_found,
                     r.gpu_found, r.cpu_throughput, r.gpu_throughput, r.speedup)
         else
-            @printf("│ %-14s │ %-12s │ %8d │ %8d │ %12.2f │\n",
-                    r.config.label, size_str, r.expected_spots, r.cpu_found, r.cpu_throughput)
+            @printf("│ %-14s │ %-6s │ %-12s │ %8d │ %8d │ %12.2f │\n",
+                    r.config.label, cam_str, size_str, r.expected_spots, r.cpu_found, r.cpu_throughput)
         end
     end
 
     if has_cuda
-        println("└────────────────┴──────────────┴──────────┴──────────┴──────────┴──────────────┴──────────────┴─────────┘")
+        println("└────────────────┴────────┴──────────────┴──────────┴──────────┴──────────┴──────────────┴──────────────┴─────────┘")
     else
-        println("└────────────────┴──────────────┴──────────┴──────────┴──────────────┘")
+        println("└────────────────┴────────┴──────────────┴──────────┴──────────┴──────────────┘")
     end
     println()
 
@@ -249,16 +266,19 @@ Main benchmark runner - tests multiple configurations.
 function run_comprehensive_benchmark()
     has_cuda = CUDA.functional()
 
-    # Define benchmark configurations
+    # Define benchmark configurations - test both camera types
     configs = [
-        BenchmarkConfig("Small sparse",    128, 128, 10, 20),
-        BenchmarkConfig("Small dense",     128, 128, 10, 50),
-        BenchmarkConfig("Medium sparse",   256, 256, 10, 50),
-        BenchmarkConfig("Medium dense",    256, 256, 10, 100),
-        BenchmarkConfig("Large sparse",    512, 512, 10, 100),
-        BenchmarkConfig("Large dense",     512, 512, 10, 200),
-        BenchmarkConfig("Med 50-frame",    256, 256, 50, 50),
-        BenchmarkConfig("Large 20-frame",  512, 512, 20, 100),
+        # IdealCamera configurations (standard DoG filtering)
+        BenchmarkConfig("Small sparse",    128, 128, 10, 20, :ideal),
+        BenchmarkConfig("Medium sparse",   256, 256, 10, 50, :ideal),
+        BenchmarkConfig("Large sparse",    512, 512, 10, 100, :ideal),
+        BenchmarkConfig("Med 50-frame",    256, 256, 50, 50, :ideal),
+
+        # SCMOSCamera configurations (variance-weighted filtering)
+        BenchmarkConfig("Small sparse",    128, 128, 10, 20, :scmos),
+        BenchmarkConfig("Medium sparse",   256, 256, 10, 50, :scmos),
+        BenchmarkConfig("Large sparse",    512, 512, 10, 100, :scmos),
+        BenchmarkConfig("Med 50-frame",    256, 256, 50, 50, :scmos),
     ]
 
     println("\nRunning benchmarks on $(length(configs)) configurations...")

@@ -2,6 +2,7 @@ module SMLMBoxer
 
 using NNlib
 using CUDA
+using cuDNN  # Required for NNlib's cuDNN backend
 using KernelAbstractions
 using SMLMData
 

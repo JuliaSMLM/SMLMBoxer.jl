@@ -92,18 +92,15 @@ function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs)
 
     # Check if we have an sCMOS camera with variance information
     if args.camera isa SCMOSCamera
-        # Use variance-weighted DoG filtering
+        # Use variance-weighted DoG filtering (returns CPU array)
         filtered_stack = dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args)
     else
-        # Standard DoG filtering (no variance weighting)
+        # Standard DoG filtering (may return CuArray if use_gpu=true)
         dog = dog_kernel(Float32(sigma_small), Float32(sigma_large))
         filtered_stack = convolve(imagestack, dog, use_gpu=args.use_gpu)
     end
 
-    # Ensure result is on CPU (safety check)
-    filtered_stack = filtered_stack isa CuArray ? Array(filtered_stack) : filtered_stack
-
-    return filtered_stack
+    return filtered_stack  # May be CuArray if use_gpu=true
 end
 
 """
@@ -288,21 +285,18 @@ function convolve(imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; us
     pad = (p, p, p, p)
 
     if use_gpu && CUDA.functional()
-        # Transfer to GPU
-        imagestack_gpu = CuArray(imagestack)
+        # Transfer to GPU if not already there
+        imagestack_gpu = imagestack isa CuArray ? imagestack : CuArray(imagestack)
         weights_gpu = CuArray(weights)
 
-        # NNlib.conv uses cuDNN on GPU
-        filtered_gpu = NNlib.conv(imagestack_gpu, weights_gpu; pad=pad, stride=1)
-
-        # Transfer back to CPU
-        filtered_stack = Array(filtered_gpu)
+        # NNlib.conv uses cuDNN on GPU - KEEP RESULT ON GPU
+        filtered_stack = NNlib.conv(imagestack_gpu, weights_gpu; pad=pad, stride=1)
     else
         # NNlib.conv CPU implementation
         filtered_stack = NNlib.conv(imagestack, weights; pad=pad, stride=1)
     end
 
-    return filtered_stack
+    return filtered_stack  # Returns CuArray if use_gpu, Array otherwise
 end
 
 
