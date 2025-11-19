@@ -74,8 +74,11 @@ end
 ```
 """
 function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}=nothing; kwargs...)
+  # Convert to Float32 for type stability throughout pipeline
+  imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
+
   # Create args with camera
-  args = GetBoxesArgs(; imagestack=imagestack, camera=camera, kwargs...)
+  args = GetBoxesArgs(; imagestack=imagestack_f32, camera=camera, kwargs...)
   return _getboxes_impl(args)
 end
 
