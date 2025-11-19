@@ -49,7 +49,7 @@ This provides GPU acceleration for sCMOS cameras (10-100x speedup on large image
 ## Standard Filtering (IdealCamera or no camera)
 
 Standard DoG convolution is used when no camera is provided or with IdealCamera.
-The convolution is performed via Flux/cuDNN on GPU or CPU, depending on `use_gpu`.
+The convolution is performed via NNlib (using cuDNN on GPU) or CPU, depending on `use_gpu`.
 
 After filtering, local maxima above `minval` are identified. Boxes are cut
 out around each maximum, excluding overlaps.
@@ -116,7 +116,7 @@ function _getboxes_impl(args::GetBoxesArgs)
 
       if memory_required <= max_free_mem
           # If the image stack fits in memory, perform the operation on the whole stack
-          filtered_stack = dog_filter(imagestack |> gpu, args)
+          filtered_stack = dog_filter(imagestack, args)
           coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
       else
           # If the image stack is too big, split it into smaller batches and process each batch separately
@@ -132,9 +132,9 @@ function _getboxes_impl(args::GetBoxesArgs)
           for i in 1:n_batches
               start_idx = (i-1)*batch_size + 1
               end_idx = min(i*batch_size, n_images)
-              batch = imagestack[:, :,:, start_idx:end_idx] |> gpu
+              batch = imagestack[:, :,:, start_idx:end_idx]
               filtered_batch = dog_filter(batch, args)
-              coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=args.use_gpu)    
+              coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
               append!(coords, coords_batch)
           end
       end
@@ -146,7 +146,10 @@ function _getboxes_impl(args::GetBoxesArgs)
   end
   
   maxcoords = removeoverlap(coords, args)
-  boxstack, boxcoords, camera_rois = getboxstack(imagestack, maxcoords, args)
+
+  # Ensure imagestack is on CPU for box extraction (uses scalar indexing)
+  imagestack_cpu = imagestack isa CuArray ? Array(imagestack) : imagestack
+  boxstack, boxcoords, camera_rois = getboxstack(imagestack_cpu, maxcoords, args)
 
   # Create ROIBatch
   # Convert boxcoords (row, col, frame) to corners (x, y) = (col, row) format

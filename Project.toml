@@ -5,16 +5,14 @@ version = "0.1.0"
 
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+NNlib = "872c559c-99b0-510c-b3b7-b6c96a88d5cd"
 SMLMData = "5488f106-40b8-4660-84c5-84a168990d1b"
-cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 
 [compat]
-Flux = "0.14"
-cuDNN = "1"
 CUDA = "4, 5"
 KernelAbstractions = "0.9"
+NNlib = "0.9"
 SMLMData = "0.5"
 julia = "1.9"
 

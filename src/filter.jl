@@ -1,7 +1,7 @@
 """
    reshape_for_flux(arr::AbstractArray)
 
-Reshape array to have singleton dims for Flux.jl convolution.  
+Reshape array to have singleton dims for NNlib convolution.  
 
 # Arguments
 - `arr`: Input array, must be 2D or 3D
@@ -99,6 +99,9 @@ function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs)
         dog = dog_kernel(Float32(sigma_small), Float32(sigma_large))
         filtered_stack = convolve(imagestack, dog, use_gpu=args.use_gpu)
     end
+
+    # Ensure result is on CPU (safety check)
+    filtered_stack = filtered_stack isa CuArray ? Array(filtered_stack) : filtered_stack
 
     return filtered_stack
 end
@@ -248,9 +251,11 @@ function convolve_variance_weighted(imagestack::AbstractArray{T},
         kernel!(output_frame, input_frame, variance_dev, sigma, winsize, ndrange=(nrows, ncols))
     end
 
-    # Wait for completion and transfer back if GPU
+    # Wait for kernel completion
+    KernelAbstractions.synchronize(backend)
+
+    # Transfer back from GPU if needed
     if use_gpu && CUDA.functional()
-        KernelAbstractions.synchronize(backend)
         filtered = Array(filtered_dev)
     end
 
@@ -261,35 +266,42 @@ end
 """
     convolve(imagestack, kernel; use_gpu=false)
 
-Convolve imagestack with given kernel.
+Convolve imagestack with given kernel using NNlib.
 
 # Arguments
-- `imagestack`: Input array of image data
-- `kernel`: Kernel to convolve with 
+- `imagestack`: Input array of image data (H, W, 1, F)
+- `kernel`: Kernel to convolve with (K, K)
 
 # Keyword Arguments
-- `use_gpu`: Whether to use GPU 
+- `use_gpu`: Whether to use GPU
 
 # Returns
 - `filtered_stack`: Convolved image stack
-""" 
+"""
 function convolve(imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; use_gpu = false)
-
-    # Prepare the weights tensor to match the expected dimensions: height, width, input channels, output channels
+    # Reshape kernel to NNlib format: (height, width, input_channels, output_channels)
     weights = reshape(kernel, size(kernel)..., 1, 1)
 
-    # Create a bias tensor filled with zeros
-    bias = zeros(Float32, 1)
+    # NNlib padding: (pad_left, pad_right, pad_top, pad_bottom)
+    # For symmetric "same" padding
+    p = size(kernel, 1) ÷ 2
+    pad = (p, p, p, p)
 
-    # Convolution layer with manually specified weights and bias, and identity activation function
-    conv_layer = Conv(weights, bias, identity, pad=SamePad())
-    
-    if use_gpu
-        imagestack = imagestack |> gpu
-        conv_layer = conv_layer |> gpu
+    if use_gpu && CUDA.functional()
+        # Transfer to GPU
+        imagestack_gpu = CuArray(imagestack)
+        weights_gpu = CuArray(weights)
+
+        # NNlib.conv uses cuDNN on GPU
+        filtered_gpu = NNlib.conv(imagestack_gpu, weights_gpu; pad=pad, stride=1)
+
+        # Transfer back to CPU
+        filtered_stack = Array(filtered_gpu)
+    else
+        # NNlib.conv CPU implementation
+        filtered_stack = NNlib.conv(imagestack, weights; pad=pad, stride=1)
     end
 
-    filtered_stack = conv_layer(imagestack)
     return filtered_stack
 end
 

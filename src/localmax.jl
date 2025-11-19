@@ -1,10 +1,10 @@
 """
 # genlocalmaximage(imagestack, kernelsize; minval=0.0, use_gpu=false)
 
-Generate an image highlighting the local maxima.
+Generate an image highlighting the local maxima using NNlib max pooling.
 
 # Arguments
-- `imagestack`: An array of real numbers representing the image data.
+- `imagestack`: An array of real numbers representing the image data (H, W, 1, F).
 - `kernelsize`: The size of the kernel used to identify local maxima.
 
 # Keyword Arguments
@@ -15,13 +15,38 @@ Generate an image highlighting the local maxima.
 - `localmaximage`: An image with local maxima highlighted.
 """
 function genlocalmaximage(imagestack::AbstractArray{<:Real}, kernelsize::Int; minval::Real=0.0, use_gpu=false)
-    maxpool_layer = MaxPool((kernelsize, kernelsize), pad=SamePad(), stride=(1, 1))
-    if use_gpu
-        maxpool_layer = maxpool_layer |> gpu
+    poolsize = (kernelsize, kernelsize)
+    # NNlib padding: (pad_left, pad_right, pad_top, pad_bottom)
+    # For "same" output size, need asymmetric padding for even kernels
+    if isodd(kernelsize)
+        # Odd kernel: symmetric padding
+        p = kernelsize ÷ 2
+        pad = (p, p, p, p)
+    else
+        # Even kernel: asymmetric padding (more on right/bottom)
+        p_low = (kernelsize - 1) ÷ 2
+        p_high = kernelsize ÷ 2
+        pad = (p_low, p_high, p_low, p_high)
     end
-    maximage = maxpool_layer(imagestack) .== imagestack
-    localmaximage = (maximage .& (imagestack .> minval)) .* imagestack
-    return localmaximage
+
+    if use_gpu && CUDA.functional()
+        # Transfer to GPU
+        imagestack_gpu = CuArray(imagestack)
+
+        # NNlib.maxpool uses cuDNN on GPU
+        maxpooled = NNlib.maxpool(imagestack_gpu, poolsize; pad=pad, stride=1)
+        maximage = (maxpooled .== imagestack_gpu)
+        localmaximage = (maximage .& (imagestack_gpu .> minval)) .* imagestack_gpu
+
+        # Transfer back to CPU
+        return Array(localmaximage)
+    else
+        # NNlib.maxpool CPU implementation
+        maxpooled = NNlib.maxpool(imagestack, poolsize; pad=pad, stride=1)
+        maximage = (maxpooled .== imagestack)
+        localmaximage = (maximage .& (imagestack .> minval)) .* imagestack
+        return localmaximage
+    end
 end
 
 """
@@ -42,7 +67,9 @@ Find the coordinates of local maxima in an image.
 """
 function findlocalmax(imagestack::AbstractArray{<:Real}, kernelsize::Int; minval::Real=0.0f0, use_gpu=false)
     localmaximage = genlocalmaximage(imagestack, kernelsize; minval, use_gpu)
-    coords = maxima2coords(localmaximage |> cpu)
+    # Ensure CPU array for coordinate extraction (handles any edge cases)
+    localmaximage_cpu = localmaximage isa CuArray ? Array(localmaximage) : localmaximage
+    coords = maxima2coords(localmaximage_cpu)
     return coords
 end
 

@@ -1,6 +1,6 @@
 module SMLMBoxer
 
-using Flux
+using NNlib
 using CUDA
 using KernelAbstractions
 using SMLMData
