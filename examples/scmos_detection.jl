@@ -112,18 +112,23 @@ println("  Value range: [$(round(minimum(img_scmos), digits=1)), $(round(maximum
 println()
 
 # ============================================================================
-# Step 4: Detect with Variance Weighting
+# Step 4: Detect with Variance Weighting (PSF-Aware Interface)
 # ============================================================================
-println("Step 4: Detecting spots with variance-weighted filtering...")
+println("Step 4: Detecting spots with variance-weighted filtering (PSF-aware)...")
+
+# Calculate PSF sigma in pixels
+psf_sigma_pixels = 0.13f0 / pixel_size  # 0.13 μm / 0.1 μm/pixel = 1.3 pixels
+println("  PSF sigma: $(round(psf_sigma_pixels, digits=2)) pixels")
+println("  Detection threshold: 500 photons")
+println()
 
 t_start = time()
 roi_batch = getboxes(img_scmos, camera_scmos;
-    boxsize=7,
-    overlap=3.0,
-    sigma_small=1.0,
-    sigma_large=2.0,
-    minval=5.0,
-    use_gpu=false
+    psf_sigma = psf_sigma_pixels,  # PSF-aware detection
+    min_photons = 500.0,            # Detect emitters with ≥500 photons
+    boxsize = 11,                   # Larger box for better fitting
+    overlap = 3.0,
+    use_gpu = false
 )
 t_cpu = time() - t_start
 
@@ -135,12 +140,11 @@ if CUDA.functional()
     println("  Running GPU detection...")
     t_start = time()
     roi_batch_gpu = getboxes(img_scmos, camera_scmos;
-        boxsize=7,
-        overlap=3.0,
-        sigma_small=1.0,
-        sigma_large=2.0,
-        minval=5.0,
-        use_gpu=true
+        psf_sigma = psf_sigma_pixels,
+        min_photons = 500.0,
+        boxsize = 11,
+        overlap = 3.0,
+        use_gpu = true
     )
     t_gpu = time() - t_start
 
@@ -162,7 +166,7 @@ function count_by_region(roi_batch, box_size, pixel_size)
     high = 0
 
     for i in 1:length(roi_batch)
-        x_corner = roi_batch.corners[1, i]
+        x_corner = roi_batch.x_corners[i]
         # Convert corner to approximate center position
         x_center_pixel = x_corner + roi_batch.roi_size ÷ 2
         x_center_micron = (x_center_pixel - 1) * pixel_size
@@ -198,7 +202,8 @@ println()
 println("ROIBatch Structure:")
 println("  Type: $(typeof(roi_batch))")
 println("  ROI data: $(size(roi_batch.data)) - (roi_size × roi_size × n_rois)")
-println("  Corners: $(size(roi_batch.corners)) - [x;y] positions")
+println("  X corners: $(length(roi_batch.x_corners)) positions")
+println("  Y corners: $(length(roi_batch.y_corners)) positions")
 println("  Frames: $(length(roi_batch.frame_indices))")
 println("  Camera: $(typeof(roi_batch.camera))")
 println()

@@ -8,28 +8,55 @@
 *SMLMBoxer.jl* is a Julia package that provides a fast and efficient method for detecting particles or blobs in a multidimensional image stack and cutting out sub-regions around local maxima. The package exports a single high-level interface function `getboxes()`.
 
 ## Usage
-The main function provided by the package is `getboxes()`, which detects particles or blobs in a multidimensional image stack and returns coordinates and boxed regions centered around local maxima. This function is highly customizable with several optional arguments and is capable of performing calculations on the GPU if available.
+The main function provided by the package is `getboxes()`, which detects particles or blobs in a multidimensional image stack and returns an `ROIBatch` containing detected regions centered around local maxima. The function uses a Difference of Gaussians (DoG) filter optimized for blob detection and is capable of GPU acceleration.
 
-### Example
+### Example (Recommended - PSF-Aware Detection)
 ```julia
-boxes, boxcoords, maxcoords = getboxes(; imagestack, boxsize=7, overlap=2.0, sigma_small=1.0, sigma_large=2.0)
+using SMLMBoxer, SMLMData
+
+# Setup camera
+camera = IdealCamera(1:256, 1:256, 0.1)  # 256×256 pixels, 100nm pixel size
+
+# Detect with PSF-aware parameters (physical units)
+roi_batch = getboxes(imagestack, camera;
+    psf_sigma = 0.13,              # PSF sigma in microns (physical units)
+    min_photons = 500.0,           # Minimum photon count to detect
+    boxsize = 11)                  # ROI size in pixels
 ```
 
-### Keyword Arguments
-- `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
-- `boxsize::Int`: Size of the box to cut out around each local maximum (pixels).  
-- `overlap::Real`: Amount of overlap allowed between boxes (pixels). 
-- `sigma_small::Real`: Sigma for small Gaussian blur kernel (pixels). 
-- `sigma_large::Real`: Sigma for large Gaussian blur kernel (pixels).
-- `minval::Real`: Minimum value to consider as a local maximum.  
-- `use_gpu::Bool`: Perform convolution and local max finding on GPU. 
+### Primary Parameters (PSF-Aware Interface)
+- `psf_sigma::Real`: PSF sigma in **microns** (physical units, e.g., 0.13 for 130nm PSF).
+  Automatically converted to pixels using camera and sets optimal DoG filter scales
+  (sigma_small = 1.0×psf_sigma, sigma_large = 2.0×psf_sigma). **Requires camera to be provided.**
+- `min_photons::Real`: Minimum total photons for an emitter to be detected (default: 500.0).
+  Automatically converted to appropriate intensity threshold accounting for PSF spreading and filter response.
+
+### Advanced Parameters (Direct Control)
+For expert users who want direct control over the DoG filter:
+- `sigma_small::Real`: Small Gaussian sigma in pixels (default: 1.0).
+- `sigma_large::Real`: Large Gaussian sigma in pixels (default: 2.0).
+- `minval::Real`: DoG filter intensity threshold (default: 0.0).
+
+**Note:** If `psf_sigma` is provided, it overrides `sigma_small`, `sigma_large`, and `minval`.
+
+### Other Parameters
+- `imagestack::AbstractArray{<:Real}`: The input image stack (2D or 3D).
+- `camera`: Optional camera object (IdealCamera or SCMOSCamera from SMLMData). Enables proper coordinate tracking and variance-weighted filtering for sCMOS.
+- `boxsize::Int`: Size of ROI boxes in pixels (default: 7).
+- `overlap::Real`: Maximum overlap between detections in pixels (default: 2.0).
+- `use_gpu::Bool`: Enable GPU acceleration (default: true).
 
 ### Returns
-- `boxstack::AbstractArray{<:Real}`: Array with dimensions (boxsize, boxsize, nboxes). Each image in the stack contains a small subregion from imagestack centered around a local maximum.
-- `boxcoords::Matrix{Float32}`: Coordinates of the upper left corner of the boxes N x (row, col, frame).
-- `maxcoords::Matrix{Float32}`: Coordinates of the maxima N x (row, col, frame).
+`ROIBatch` object with the following fields:
+- `data`: ROI stack (boxsize × boxsize × n_rois) containing detected image patches.
+- `x_corners`: Vector of x (column) corner positions in camera coordinates.
+- `y_corners`: Vector of y (row) corner positions in camera coordinates.
+- `frame_indices`: Vector of frame indices for each ROI.
+- `camera`: Camera object for coordinate system tracking.
+- `roi_size`: Size of each ROI.
 
-The `getboxes()` function performs a Difference of Gaussians (DoG) filter on the image stack to identify blobs and local maxima. The DoG is computed from two Gaussian kernels with standard deviations specified by `sigma_small` and `sigma_large`. After filtering, local maxima above a certain minimum value (`minval`) are identified, and boxes are cut out around each maximum, excluding overlaps. This computation can be performed either on a CPU or a GPU, depending on the `use_gpu` argument.
+### How It Works
+The `getboxes()` function applies a Difference of Gaussians (DoG) filter to identify blob-like features. When using the PSF-aware interface, the filter scales are automatically matched to your PSF width for optimal detection sensitivity, and the photon threshold is converted to the appropriate intensity threshold accounting for PSF spreading and filter response.
 
 ## Additional Tools 
 

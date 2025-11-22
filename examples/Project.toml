@@ -1,5 +1,7 @@
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
+ImageCore = "a09fc81d-aa75-5fe9-8630-4744c3626534"
 MicroscopePSFs = "de9ac726-48a4-48ab-84b0-1c03c7c18929"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 SMLMBoxer = "a7d3b33b-b840-4f8e-b556-99be03134090"

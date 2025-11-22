@@ -126,7 +126,8 @@ function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
     nrows, ncols, _, nframes = size(imagestack)
 
     # Get variance map from camera (variance = readnoise²)
-    variance_map = get_variance_map(args.camera, (nrows, ncols))
+    # Convert to match imagestack element type to avoid type mismatch
+    variance_map = convert(Matrix{eltype(imagestack)}, get_variance_map(args.camera, (nrows, ncols)))
 
     # Apply small Gaussian with variance weighting
     filtered_small = convolve_variance_weighted(imagestack, variance_map,
