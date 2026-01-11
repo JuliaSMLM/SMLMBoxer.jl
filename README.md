@@ -7,6 +7,20 @@
 
 *SMLMBoxer.jl* is a Julia package that provides a fast and efficient method for detecting particles or blobs in a multidimensional image stack and cutting out sub-regions around local maxima. The package exports a single high-level interface function `getboxes()`.
 
+## Installation
+
+```julia
+using Pkg
+Pkg.add("SMLMBoxer")
+```
+
+For development version:
+
+```julia
+using Pkg
+Pkg.add(url="https://github.com/JuliaSMLM/SMLMBoxer.jl")
+```
+
 ## Usage
 The main function provided by the package is `getboxes()`, which detects particles or blobs in a multidimensional image stack and returns an `ROIBatch` containing detected regions centered around local maxima. The function uses a Difference of Gaussians (DoG) filter optimized for blob detection and is capable of GPU acceleration.
 
@@ -15,7 +29,7 @@ The main function provided by the package is `getboxes()`, which detects particl
 using SMLMBoxer, SMLMData
 
 # Setup camera
-camera = IdealCamera(1:256, 1:256, 0.1)  # 256×256 pixels, 100nm pixel size
+camera = IdealCamera(1:256, 1:256, 0.1f0)  # 256×256 pixels, 100nm pixel size
 
 # Detect with PSF-aware parameters (physical units)
 roi_batch = getboxes(imagestack, camera;
@@ -44,7 +58,13 @@ For expert users who want direct control over the DoG filter:
 - `camera`: Optional camera object (IdealCamera or SCMOSCamera from SMLMData). Enables proper coordinate tracking and variance-weighted filtering for sCMOS.
 - `boxsize::Int`: Size of ROI boxes in pixels (default: 7).
 - `overlap::Real`: Maximum overlap between detections in pixels (default: 2.0).
-- `use_gpu::Bool`: Enable GPU acceleration (default: true).
+- `backend::Symbol`: Compute backend - `:cpu`, `:gpu`, or `:auto` (default: `:auto`).
+  - `:cpu` - Always use CPU
+  - `:gpu` - Require GPU, wait for memory if needed
+  - `:auto` - Try GPU with timeout, fall back to CPU if unavailable
+- `auto_timeout::Real`: Max seconds to wait for GPU in `:auto` mode (default: 30.0).
+- `gpu_timeout::Real`: Max seconds to wait in `:gpu` mode (default: Inf).
+- `on_wait::Function`: Optional callback for wait progress reporting.
 
 ### Returns
 `ROIBatch` object with the following fields:
