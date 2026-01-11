@@ -19,41 +19,73 @@ function get_pixel_size(camera::AbstractCamera)
 end
 
 """
-    photons_to_dog_threshold(min_photons, psf_sigma)
+    get_effective_gain(camera::AbstractCamera)
 
-Convert total photon count threshold to DoG filter peak intensity threshold.
+Get effective gain for converting photons to image ADU units (ADU/photon).
+
+For IdealCamera: returns 1.0 (assumes image is in photon units)
+For SCMOSCamera: returns QE / gain (photons → ADU conversion factor)
+  - SMLMData defines gain as e⁻/ADU (electrons per ADU)
+  - Physical conversion: photon → QE electrons → electrons/gain ADU
+  - So: ADU/photon = QE / gain
+
+Used to convert photon-based thresholds to image-unit thresholds.
+"""
+function get_effective_gain(camera::IdealCamera)
+    return 1.0f0  # IdealCamera assumes photon units
+end
+
+function get_effective_gain(camera::SCMOSCamera)
+    # For threshold calculation, use mean values if arrays
+    # SMLMData defines gain as e⁻/ADU (electrons per ADU)
+    # Conversion: ADU = (photons × QE) / gain
+    # So effective_gain (ADU/photon) = QE / gain
+    gain = camera.gain isa Real ? camera.gain : mean(camera.gain)
+    qe = camera.qe isa Real ? camera.qe : mean(camera.qe)
+    return Float32(qe / gain)  # Combined: photons → ADU (QE / gain, not QE × gain)
+end
+
+"""
+    photons_to_dog_threshold(min_photons, psf_sigma; effective_gain=1.0)
+
+Convert total photon count threshold to DoG filter intensity threshold in image units (ADU).
 
 # Arguments
-- `min_photons`: Minimum total photons for detection
+- `min_photons`: Minimum signal photons above background for detection
 - `psf_sigma`: PSF sigma in pixels
+- `effective_gain`: Camera gain factor (QE × gain) to convert photons → ADU (default: 1.0)
 
 # Returns
-- `minval`: DoG filter intensity threshold
+- `minval`: DoG filter intensity threshold in image units (ADU)
 
 # Physics
 For a 2D Gaussian PSF with total photons N and sigma σ_psf, the peak intensity is:
-    I_peak = N / (2π σ_psf²)
+    I_peak = N / (2π σ_psf²)  [photons/pixel]
 
 After convolution with the small Gaussian filter (sigma_small = 1.0 × psf_sigma),
 the effective sigma becomes:
     σ_eff = √(σ_psf² + sigma_small²)
 
 The peak after filtering is:
-    I_filtered = N / (2π σ_eff²)
+    I_filtered = N / (2π σ_eff²)  [photons/pixel]
 
 The DoG response (small - large Gaussian) has a lower peak than the small Gaussian alone.
-For sigma_large = 2×sigma_small, empirical testing shows the DoG peak is approximately
-0.65 times the small Gaussian peak.
+For sigma_large = 2×sigma_small, the DoG peak is approximately 0.65× the small Gaussian peak.
+
+For raw camera data in ADU, the threshold is scaled by effective_gain = QE × gain.
 """
-function photons_to_dog_threshold(min_photons::Real, psf_sigma::Real)
+function photons_to_dog_threshold(min_photons::Real, psf_sigma::Real; effective_gain::Real=1.0)
     # DoG filter uses sigma_small = 1.0 × psf_sigma
     sigma_small = 1.0 * psf_sigma
 
     # Effective sigma after small Gaussian blur (convolution of two Gaussians)
     σ_eff = sqrt(psf_sigma^2 + sigma_small^2)
 
-    # Peak intensity after small Gaussian filtering
-    peak_filtered = min_photons / (2π * σ_eff^2)
+    # Peak intensity after small Gaussian filtering (in photons)
+    peak_filtered_photons = min_photons / (2π * σ_eff^2)
+
+    # Convert to image units (ADU) using camera gain
+    peak_filtered = peak_filtered_photons * effective_gain
 
     # DoG reduces peak (empirical factor for sigma_large = 2×sigma_small)
     dog_factor = 0.65
@@ -88,7 +120,11 @@ When psf_sigma is provided:
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
 - `boxsize::Int`: ROI box size in pixels (default: 7)
 - `overlap::Real`: Maximum overlap between detections in pixels (default: 2.0)
-- `use_gpu::Bool`: Use GPU acceleration (default: true)
+- `use_gpu::Bool`: Use GPU acceleration (default: true) - DEPRECATED, use backend instead
+- `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
+- `auto_timeout::Real`: Max wait seconds for :auto mode before CPU fallback (default: 30.0)
+- `gpu_timeout::Real`: Max wait seconds for :gpu mode (default: Inf)
+- `on_wait`: Optional callback(elapsed, available, required) for wait progress
 """
 mutable struct GetBoxesArgs
     imagestack::AbstractArray
@@ -99,6 +135,10 @@ mutable struct GetBoxesArgs
     sigma_large::Float32
     minval::Float32
     use_gpu::Bool
+    backend::Symbol
+    auto_timeout::Float64
+    gpu_timeout::Float64
+    on_wait::Union{Function,Nothing}
 
     # Inner constructor handles conversion logic
     function GetBoxesArgs(;
@@ -111,7 +151,11 @@ mutable struct GetBoxesArgs
         sigma_small::Union{Real,Nothing} = nothing,
         sigma_large::Union{Real,Nothing} = nothing,
         minval::Union{Real,Nothing} = nothing,
-        use_gpu::Bool = true
+        use_gpu::Union{Bool,Nothing} = nothing,
+        backend::Symbol = :auto,
+        auto_timeout::Real = 30.0,
+        gpu_timeout::Real = Inf,
+        on_wait::Union{Function,Nothing} = nothing
     )
         # Determine which interface is being used
         if psf_sigma !== nothing
@@ -127,7 +171,8 @@ mutable struct GetBoxesArgs
 
             σ_small = Float32(1.0 * psf_sigma_pixels)
             σ_large = Float32(2.0 * psf_sigma_pixels)
-            min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels)
+            effective_gain = get_effective_gain(camera)
+            min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels; effective_gain=effective_gain)
         else
             # OLD INTERFACE: Direct control (backward compatible)
             σ_small = Float32(sigma_small !== nothing ? sigma_small : 1.0)
@@ -135,7 +180,21 @@ mutable struct GetBoxesArgs
             min_val = Float32(minval !== nothing ? minval : 0.0)
         end
 
-        new(imagestack, camera, boxsize, Float32(overlap), σ_small, σ_large, min_val, use_gpu)
+        # Handle backwards compatibility: use_gpu overrides backend if explicitly set
+        actual_backend = backend
+        if use_gpu !== nothing
+            actual_backend = use_gpu ? :auto : :cpu
+        end
+
+        # Validate backend
+        actual_backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
+
+        # use_gpu is determined later in _getboxes_impl based on backend and memory availability
+        # For now, set it based on backend intent (will be refined during processing)
+        initial_use_gpu = actual_backend != :cpu
+
+        new(imagestack, camera, boxsize, Float32(overlap), σ_small, σ_large, min_val,
+            initial_use_gpu, actual_backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait)
     end
 end
 
@@ -190,10 +249,12 @@ end
 
 function extract_camera_roi(camera::SCMOSCamera{T}, row_range, col_range) where T
     # Handle both scalar and per-pixel calibration parameters
-    offset = camera.offset isa AbstractArray ? camera.offset[row_range[1:end-1], col_range[1:end-1]] : camera.offset
-    gain = camera.gain isa AbstractArray ? camera.gain[row_range[1:end-1], col_range[1:end-1]] : camera.gain
-    readnoise = camera.readnoise isa AbstractArray ? camera.readnoise[row_range[1:end-1], col_range[1:end-1]] : camera.readnoise
-    qe = camera.qe isa AbstractArray ? camera.qe[row_range[1:end-1], col_range[1:end-1]] : camera.qe
+    # SCMOSCamera stores calibration arrays as (nx, ny) = (cols, rows)
+    # row_range/col_range are in image coordinates (rows, cols), so swap indices
+    offset = camera.offset isa AbstractArray ? camera.offset[col_range[1:end-1], row_range[1:end-1]] : camera.offset
+    gain = camera.gain isa AbstractArray ? camera.gain[col_range[1:end-1], row_range[1:end-1]] : camera.gain
+    readnoise = camera.readnoise isa AbstractArray ? camera.readnoise[col_range[1:end-1], row_range[1:end-1]] : camera.readnoise
+    qe = camera.qe isa AbstractArray ? camera.qe[col_range[1:end-1], row_range[1:end-1]] : camera.qe
 
     return SCMOSCamera(
         camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
@@ -229,12 +290,96 @@ function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int,Int}) whe
     if camera.readnoise isa AbstractArray
         # Per-pixel readnoise map: variance = readnoise²
         variance_map = camera.readnoise .^ 2
-        # Ensure it matches the image size
+        # SCMOSCamera stores readnoise as (nx, ny) = (cols, rows), but imagestack is (rows, cols)
+        # Transpose if needed to match imagestack convention
+        if size(variance_map) == (ncols, nrows)
+            variance_map = transpose(variance_map)
+        end
         @assert size(variance_map) == imagesize "Readnoise map size $(size(variance_map)) doesn't match image size $imagesize"
         # Convert to Float32 to match imagestack type (getboxes converts all images to Float32)
-        return Float32.(variance_map)
+        return Float32.(collect(variance_map))
     else
         # Scalar readnoise: uniform variance (always Float32 to match imagestack)
         return fill(Float32(camera.readnoise^2), imagesize)
     end
+end
+
+"""
+    recommend_batch_size(height, width; backend=:auto, memory_fraction=0.8) -> Int
+
+Return recommended maximum number of frames to load at once given memory constraints.
+
+This helps users decide how much data to load before calling `getboxes()`. For very large
+datasets, loading data in chunks of this size ensures efficient processing without
+running out of memory.
+
+# Arguments
+- `height::Int`: Image height in pixels
+- `width::Int`: Image width in pixels
+- `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
+- `memory_fraction::Real`: Fraction of free memory to use (default: 0.8)
+- `use_gpu::Bool`: DEPRECATED - use backend instead
+
+# Returns
+- Maximum recommended number of frames to load at once
+
+# Memory Model
+The processing pipeline requires approximately 6× the raw image size:
+- Input imagestack
+- Filtered stack (DoG output)
+- Local maxima detection intermediates
+- Coordinate arrays
+- Box extraction workspace
+- Broadcast temporaries
+
+# Example
+```julia
+using SMLMBoxer
+
+# Check how many 512×512 frames to load at once
+max_frames = recommend_batch_size(512, 512)
+println("Load up to \$max_frames frames at a time")
+
+# Load and process in chunks
+for chunk_start in 1:max_frames:total_frames
+    chunk_end = min(chunk_start + max_frames - 1, total_frames)
+    imagestack = load_frames(chunk_start:chunk_end)
+    roi_batch = getboxes(imagestack, camera; psf_sigma=0.13)
+    # ... process results
+end
+```
+"""
+function recommend_batch_size(height::Int, width::Int;
+        backend::Symbol=:auto,
+        use_gpu::Union{Bool,Nothing}=nothing,
+        memory_fraction::Real=0.8)
+    # Memory multiplier: accounts for all processing stages
+    # Matches n_copies in _getboxes_impl for consistency
+    n_copies = 6
+    bytes_per_frame = height * width * sizeof(Float32) * n_copies
+
+    # Handle backwards compatibility
+    actual_backend = backend
+    if use_gpu !== nothing
+        actual_backend = use_gpu ? :auto : :cpu
+    end
+
+    # Determine if GPU should be used
+    use_gpu_actual = actual_backend != :cpu && has_cuda() && CUDA.functional()
+
+    if use_gpu_actual
+        # GPU: find device with most free memory
+        max_free_mem = 0
+        for i in 0:length(CUDA.devices())-1
+            CUDA.device!(i)
+            free_mem = CUDA.free_memory()
+            max_free_mem = max(max_free_mem, free_mem)
+        end
+        available = max_free_mem * memory_fraction
+    else
+        # CPU: use system free memory
+        available = Sys.free_memory() * memory_fraction
+    end
+
+    return max(1, floor(Int, available / bytes_per_frame))
 end

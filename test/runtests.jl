@@ -295,6 +295,22 @@ if get(ENV, "CI", "false") == "false"
             end
         end
     end
+
+    # GPU wait/timeout tests
+    println()
+    println("="^70)
+    println("Running GPU wait/timeout tests")
+    println("="^70)
+    include("local_gpu_wait_test.jl")
+
+    @testset "GPU Wait/Timeout Tests" begin
+        @test run_gpu_wait_tests() == true
+
+        # Memory pressure test (optional - may not trigger on high-memory GPUs)
+        if CUDA.functional()
+            @test test_memory_pressure_wait() == true
+        end
+    end
 else
     println("CI environment detected - skipping performance benchmark")
     println("To run performance benchmarks, execute tests locally:")
