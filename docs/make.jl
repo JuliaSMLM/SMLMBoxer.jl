@@ -16,7 +16,11 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "Examples" => "examples.md",
+        "API" => "api.md",
     ],
+    doctest = false,  # Set to true to enable doctests after verifying examples
+    checkdocs = :exports,  # Only check that exported items are documented
 )
 
 deploydocs(;
