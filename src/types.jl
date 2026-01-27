@@ -249,12 +249,12 @@ end
 
 function extract_camera_roi(camera::SCMOSCamera{T}, row_range, col_range) where T
     # Handle both scalar and per-pixel calibration parameters
-    # SCMOSCamera stores calibration arrays as (nx, ny) = (cols, rows)
-    # row_range/col_range are in image coordinates (rows, cols), so swap indices
-    offset = camera.offset isa AbstractArray ? camera.offset[col_range[1:end-1], row_range[1:end-1]] : camera.offset
-    gain = camera.gain isa AbstractArray ? camera.gain[col_range[1:end-1], row_range[1:end-1]] : camera.gain
-    readnoise = camera.readnoise isa AbstractArray ? camera.readnoise[col_range[1:end-1], row_range[1:end-1]] : camera.readnoise
-    qe = camera.qe isa AbstractArray ? camera.qe[col_range[1:end-1], row_range[1:end-1]] : camera.qe
+    # SMLMData 0.6+: SCMOSCamera calibration arrays use (ny, nx) = (rows, cols) convention
+    # This matches Julia's standard image indexing: array[row, col]
+    offset = camera.offset isa AbstractArray ? camera.offset[row_range[1:end-1], col_range[1:end-1]] : camera.offset
+    gain = camera.gain isa AbstractArray ? camera.gain[row_range[1:end-1], col_range[1:end-1]] : camera.gain
+    readnoise = camera.readnoise isa AbstractArray ? camera.readnoise[row_range[1:end-1], col_range[1:end-1]] : camera.readnoise
+    qe = camera.qe isa AbstractArray ? camera.qe[row_range[1:end-1], col_range[1:end-1]] : camera.qe
 
     return SCMOSCamera(
         camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
@@ -290,9 +290,9 @@ function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int,Int}) whe
     if camera.readnoise isa AbstractArray
         # Per-pixel readnoise map: variance = readnoise²
         variance_map = camera.readnoise .^ 2
-        # SCMOSCamera stores readnoise as (nx, ny) = (cols, rows), but imagestack is (rows, cols)
-        # Transpose if needed to match imagestack convention
-        if size(variance_map) == (ncols, nrows)
+        # SMLMData 0.6+: readnoise uses (ny, nx) = (rows, cols), matching image convention
+        # Defensive transpose for legacy data with inverted convention
+        if size(variance_map) == (ncols, nrows) && ncols != nrows
             variance_map = transpose(variance_map)
         end
         @assert size(variance_map) == imagesize "Readnoise map size $(size(variance_map)) doesn't match image size $imagesize"
