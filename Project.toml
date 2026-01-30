@@ -1,6 +1,6 @@
 name = "SMLMBoxer"
 uuid = "a7d3b33b-b840-4f8e-b556-99be03134090"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["klidke@unm.edu"]
 
 [deps]
