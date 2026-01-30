@@ -94,20 +94,25 @@ println("  Signal range: [$(round(minimum(img_noisy), digits=1)), $(round(maximu
 println()
 
 # ============================================================================
-# Step 4: Detect Boxes with SMLMBoxer
+# Step 4: Detect Boxes with SMLMBoxer (PSF-Aware Interface)
 # ============================================================================
-println("Step 4: Detecting spots with SMLMBoxer...")
+println("Step 4: Detecting spots with SMLMBoxer (PSF-aware interface)...")
+
+# Calculate PSF sigma in pixels
+psf_sigma_pixels = 0.13f0 / pixel_size  # 0.13 μm / 0.1 μm/pixel = 1.3 pixels
+println("  PSF sigma: $(round(psf_sigma_pixels, digits=2)) pixels")
+println("  Detection threshold: 500 photons")
+println()
 
 # Detect on clean image (CPU)
 println("  Running on clean image (CPU)...")
 t_start = time()
 roi_batch_clean = getboxes(img_clean, camera;
-    boxsize=7,
-    overlap=3.0,
-    sigma_small=1.0,
-    sigma_large=2.0,
-    minval=5.0,
-    use_gpu=false
+    psf_sigma = psf_sigma_pixels,  # PSF-aware detection
+    min_photons = 500.0,            # Detect emitters with ≥500 photons
+    boxsize = 11,                   # Larger box for better fitting
+    overlap = 3.0,
+    use_gpu = false
 )
 t_clean = time() - t_start
 
@@ -115,12 +120,11 @@ t_clean = time() - t_start
 println("  Running on noisy image (CPU)...")
 t_start = time()
 roi_batch_noisy = getboxes(img_noisy, camera;
-    boxsize=7,
-    overlap=3.0,
-    sigma_small=1.0,
-    sigma_large=2.0,
-    minval=5.0,
-    use_gpu=false
+    psf_sigma = psf_sigma_pixels,
+    min_photons = 500.0,
+    boxsize = 11,
+    overlap = 3.0,
+    use_gpu = false
 )
 t_noisy = time() - t_start
 
@@ -129,12 +133,11 @@ if CUDA.functional()
     println("  Running on noisy image (GPU)...")
     t_start = time()
     roi_batch_gpu = getboxes(img_noisy, camera;
-        boxsize=7,
-        overlap=3.0,
-        sigma_small=1.0,
-        sigma_large=2.0,
-        minval=5.0,
-        use_gpu=true
+        psf_sigma = psf_sigma_pixels,
+        min_photons = 500.0,
+        boxsize = 11,
+        overlap = 3.0,
+        use_gpu = true
     )
     t_gpu = time() - t_start
 else
@@ -184,7 +187,8 @@ println()
 println("ROIBatch Structure:")
 println("  Type: $(typeof(roi_batch_noisy))")
 println("  ROI data size: $(size(roi_batch_noisy.data))")
-println("  Corners size: $(size(roi_batch_noisy.corners))")
+println("  X corners: $(length(roi_batch_noisy.x_corners)) positions")
+println("  Y corners: $(length(roi_batch_noisy.y_corners)) positions")
 println("  Frame indices: $(length(roi_batch_noisy.frame_indices))")
 println("  Camera type: $(typeof(roi_batch_noisy.camera))")
 println("  ROI size: $(roi_batch_noisy.roi_size)")
@@ -195,8 +199,8 @@ if length(roi_batch_noisy) > 0
     println("First 5 Detections (corner positions):")
     println("  [x, y] = [col, row] in camera pixels")
     for i in 1:min(5, length(roi_batch_noisy))
-        x_corner = roi_batch_noisy.corners[1, i]
-        y_corner = roi_batch_noisy.corners[2, i]
+        x_corner = roi_batch_noisy.x_corners[i]
+        y_corner = roi_batch_noisy.y_corners[i]
         frame = roi_batch_noisy.frame_indices[i]
         println(@sprintf("    ROI %d: corner=(%3d, %3d), frame=%d", i, x_corner, y_corner, frame))
     end

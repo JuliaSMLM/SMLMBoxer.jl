@@ -26,7 +26,8 @@ using Test
         # Test ROIBatch structure
         @test roi_batch isa ROIBatch
         @test hasfield(typeof(roi_batch), :data)
-        @test hasfield(typeof(roi_batch), :corners)
+        @test hasfield(typeof(roi_batch), :x_corners)
+        @test hasfield(typeof(roi_batch), :y_corners)
         @test hasfield(typeof(roi_batch), :frame_indices)
         @test hasfield(typeof(roi_batch), :camera)
 
@@ -34,12 +35,12 @@ using Test
         @test size(roi_batch.data) == (5, 5, 2)
         @test length(roi_batch) == 2
 
-        # Verify correct box locations (corners are [x;y] = [col;row] of top-left corner)
+        # Verify correct box locations (x_corners/y_corners are col/row of top-left corner)
         # For boxsize=5 and center at (row=20, col=50): corner = (50 - 5÷2, 20 - 5÷2) = (48, 18)
-        @test roi_batch.corners[1, 1] == 48  # x (col) of first ROI
-        @test roi_batch.corners[2, 1] == 18  # y (row) of first ROI
-        @test roi_batch.corners[1, 2] == 58  # x (col) of second ROI
-        @test roi_batch.corners[2, 2] == 28  # y (row) of second ROI
+        @test roi_batch.x_corners[1] == 48  # x (col) of first ROI
+        @test roi_batch.y_corners[1] == 18  # y (row) of first ROI
+        @test roi_batch.x_corners[2] == 58  # x (col) of second ROI
+        @test roi_batch.y_corners[2] == 28  # y (row) of second ROI
         @test roi_batch.frame_indices[1] == 1
         @test roi_batch.frame_indices[2] == 1
 
@@ -68,8 +69,8 @@ using Test
 
         # Verify correct box location (should keep brighter peak)
         # For boxsize=5 and center at (row=20, col=50): corner = (50 - 5÷2, 20 - 5÷2) = (48, 18)
-        @test roi_batch.corners[1, 1] == 48  # x (col)
-        @test roi_batch.corners[2, 1] == 18  # y (row)
+        @test roi_batch.x_corners[1] == 48  # x (col)
+        @test roi_batch.y_corners[1] == 18  # y (row)
         @test roi_batch.frame_indices[1] == 1
     end
 
@@ -103,10 +104,10 @@ using Test
 
         # Check corner positions (top-left corner of ROI)
         # For boxsize=5 and center at (row=20, col=50): corner = (48, 18)
-        @test roi_batch.corners[1, 1] == 48  # x (col) of first ROI
-        @test roi_batch.corners[2, 1] == 18  # y (row) of first ROI
-        @test roi_batch.corners[1, 2] == 58  # x (col) of second ROI
-        @test roi_batch.corners[2, 2] == 28  # y (row) of second ROI
+        @test roi_batch.x_corners[1] == 48  # x (col) of first ROI
+        @test roi_batch.y_corners[1] == 18  # y (row) of first ROI
+        @test roi_batch.x_corners[2] == 58  # x (col) of second ROI
+        @test roi_batch.y_corners[2] == 28  # y (row) of second ROI
 
         # Check frame indices
         @test roi_batch.frame_indices[1] == 1
@@ -152,6 +153,117 @@ using Test
         @test roi_batch.camera === camera
         @test roi_batch.camera.offset == 100.0f0
         @test roi_batch.camera.gain == 2.0f0
+    end
+
+    @testset "Rectangular SCMOSCamera with per-pixel calibration" begin
+        # Test extract_camera_roi directly with rectangular camera + per-pixel arrays
+        # This verifies the (ny, nx) = (rows, cols) indexing convention in SMLMData 0.6+
+        nrows, ncols = 80, 120
+
+        # Create per-pixel readnoise array matching image convention (ny, nx) = (rows, cols)
+        # Use spatially varying values to verify correct indexing
+        readnoise_map = zeros(Float32, nrows, ncols)
+        for r in 1:nrows, c in 1:ncols
+            readnoise_map[r, c] = 1.0f0 + 0.01f0 * r + 0.001f0 * c  # Unique per pixel
+        end
+
+        pixel_size = 0.1f0
+        camera = SCMOSCamera(
+            ncols,  # npixels_x
+            nrows,  # npixels_y
+            pixel_size,
+            readnoise_map,  # per-pixel readnoise
+            offset = 100.0f0,
+            gain = 2.0f0,
+            qe = 0.9f0
+        )
+
+        # Extract a 7x7 ROI centered around row 40, col 60
+        # ROI spans rows 37:43 (7 pixels), cols 57:63 (7 pixels)
+        # For camera extraction, ranges include the +1 for pixel edges
+        row_range = 37:44  # 8 elements for 7 pixels (edges)
+        col_range = 57:64  # 8 elements for 7 pixels (edges)
+
+        roi_camera = SMLMBoxer.extract_camera_roi(camera, row_range, col_range)
+
+        @test roi_camera isa SCMOSCamera
+        @test roi_camera.readnoise isa AbstractArray
+        @test size(roi_camera.readnoise) == (7, 7)
+
+        # Verify values are from correct region by checking the pattern
+        # Original: readnoise[r,c] = 1.0 + 0.01*r + 0.001*c
+        # ROI starts at row 37, col 57
+        # So roi_readnoise[1,1] should be readnoise_map[37, 57] = 1.0 + 0.37 + 0.057 = 1.427
+        expected_corner = 1.0f0 + 0.01f0 * 37 + 0.001f0 * 57
+        @test roi_camera.readnoise[1, 1] ≈ expected_corner
+
+        # Check center: roi_readnoise[4,4] should be readnoise_map[40, 60] = 1.0 + 0.40 + 0.060 = 1.46
+        expected_center = 1.0f0 + 0.01f0 * 40 + 0.001f0 * 60
+        @test roi_camera.readnoise[4, 4] ≈ expected_center
+
+        # Verify NOT transposed: if wrongly indexed, we'd get readnoise_map[57, 37] which doesn't exist
+        # (would error) or readnoise_map[col, row] giving wrong values
+        # Check opposite corner: roi_readnoise[7,7] should be readnoise_map[43, 63]
+        expected_opposite = 1.0f0 + 0.01f0 * 43 + 0.001f0 * 63
+        @test roi_camera.readnoise[7, 7] ≈ expected_opposite
+    end
+
+    @testset "PSF-aware interface (physical units)" begin
+        # Test image with a bright peak representing an emitter
+        image = zeros(Float32, 100, 100)
+        image[50, 50] = 1000.0  # ~1000 photon peak
+
+        # Create camera
+        pixel_size = 0.1f0  # 100nm pixels
+        camera = IdealCamera(
+            1:101,
+            1:101,
+            pixel_size
+        )
+
+        # Use PSF-aware interface with physical units (microns)
+        psf_sigma_microns = 0.13f0  # 130nm PSF
+        roi_batch = getboxes(image, camera;
+            psf_sigma = psf_sigma_microns,  # In microns (auto-converts to pixels)
+            min_photons = 500.0,             # Should detect our 1000 photon peak
+            boxsize = 11,
+            use_gpu = false
+        )
+
+        # Should detect the peak
+        @test length(roi_batch) >= 1
+        @test size(roi_batch.data, 3) >= 1
+
+        # Verify the corner is correct
+        # For boxsize=11 and center at (row=50, col=50): corner = (50 - 11÷2, 50 - 11÷2) = (45, 45)
+        @test roi_batch.x_corners[1] == 45  # x (col)
+        @test roi_batch.y_corners[1] == 45  # y (row)
+
+        # Test with higher threshold - should not detect
+        roi_batch_high = getboxes(image, camera;
+            psf_sigma = psf_sigma_microns,
+            min_photons = 5000.0,  # Way above our peak
+            boxsize = 11,
+            use_gpu = false
+        )
+        @test length(roi_batch_high) == 0
+    end
+
+    @testset "Backward compatibility (old interface)" begin
+        # Verify old interface still works
+        image = zeros(Float32, 100, 100)
+        image[20, 50] = 10
+
+        roi_batch = getboxes(image;
+            boxsize = 5,
+            sigma_small = 1.0,
+            sigma_large = 2.0,
+            minval = 0.1,
+            use_gpu = false
+        )
+
+        @test length(roi_batch) >= 1
+        @test size(roi_batch.data, 3) >= 1
     end
 
     @testset "sCMOS variance-weighted detection (per-pixel)" begin
@@ -234,6 +346,22 @@ if get(ENV, "CI", "false") == "false"
             if !isempty(large_results)
                 @test any(r -> r.speedup > 1.0, large_results)
             end
+        end
+    end
+
+    # GPU wait/timeout tests
+    println()
+    println("="^70)
+    println("Running GPU wait/timeout tests")
+    println("="^70)
+    include("local_gpu_wait_test.jl")
+
+    @testset "GPU Wait/Timeout Tests" begin
+        @test run_gpu_wait_tests() == true
+
+        # Memory pressure test (optional - may not trigger on high-memory GPUs)
+        if CUDA.functional()
+            @test test_memory_pressure_wait() == true
         end
     end
 else

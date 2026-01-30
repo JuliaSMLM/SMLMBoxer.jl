@@ -126,7 +126,8 @@ function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
     nrows, ncols, _, nframes = size(imagestack)
 
     # Get variance map from camera (variance = readnoise²)
-    variance_map = get_variance_map(args.camera, (nrows, ncols))
+    # Convert to match imagestack element type to avoid type mismatch
+    variance_map = convert(Matrix{eltype(imagestack)}, get_variance_map(args.camera, (nrows, ncols)))
 
     # Apply small Gaussian with variance weighting
     filtered_small = convolve_variance_weighted(imagestack, variance_map,
@@ -201,14 +202,17 @@ end
 Apply variance-weighted Gaussian convolution using KernelAbstractions.
 Device-agnostic: works on CPU and GPU with same code.
 
+Follows same pattern as `convolve()`: stays on GPU if use_gpu=true,
+letting interface.jl handle memory batching for both paths uniformly.
+
 # Arguments
-- `imagestack`: Input image (rows, cols, 1, frames)
+- `imagestack`: Input image (rows, cols, 1, frames) - CPU or GPU array
 - `variance_map`: Variance at each pixel (rows, cols)
 - `sigma`: Gaussian sigma
 - `use_gpu`: Use GPU if available
 
 # Returns
-- Variance-weighted filtered image
+- Variance-weighted filtered image (CuArray if use_gpu, Array otherwise)
 """
 function convolve_variance_weighted(imagestack::AbstractArray{T},
                                     variance_map::AbstractMatrix{T},
@@ -216,47 +220,44 @@ function convolve_variance_weighted(imagestack::AbstractArray{T},
                                     use_gpu::Bool) where T<:Real
     nrows, ncols, _, nframes = size(imagestack)
 
-    # Create output array
-    filtered = similar(imagestack)
-
     # Gaussian kernel window size
     winsize = Int(ceil(3 * sigma))
 
-    # Select backend: GPU or CPU
     if use_gpu && CUDA.functional()
         backend = CUDABackend()
-        # Transfer data to GPU
-        imagestack_dev = CuArray(imagestack)
-        variance_dev = CuArray(variance_map)
-        filtered_dev = CuArray(filtered)
+
+        # Move to GPU if not already there (same pattern as convolve())
+        imagestack_gpu = imagestack isa CuArray ? imagestack : CuArray(imagestack)
+        variance_gpu = variance_map isa CuArray ? variance_map : CuArray(variance_map)
+
+        # Allocate output on GPU - stays on GPU like standard path
+        filtered_gpu = CUDA.zeros(T, nrows, ncols, 1, nframes)
+
+        kernel! = variance_weighted_gaussian_kernel!(backend)
+
+        # Process all frames on GPU
+        for frame in 1:nframes
+            input_frame = @view imagestack_gpu[:, :, 1, frame]
+            output_frame = @view filtered_gpu[:, :, 1, frame]
+            kernel!(output_frame, input_frame, variance_gpu, sigma, winsize, ndrange=(nrows, ncols))
+        end
+
+        KernelAbstractions.synchronize(backend)
+        return filtered_gpu  # Stay on GPU - matches convolve() behavior
     else
         backend = CPU()
-        imagestack_dev = imagestack
-        variance_dev = variance_map
-        filtered_dev = filtered
+        filtered = similar(imagestack)
+        kernel! = variance_weighted_gaussian_kernel!(backend)
+
+        for frame in 1:nframes
+            input_frame = @view imagestack[:, :, 1, frame]
+            output_frame = @view filtered[:, :, 1, frame]
+            kernel!(output_frame, input_frame, variance_map, sigma, winsize, ndrange=(nrows, ncols))
+        end
+
+        KernelAbstractions.synchronize(backend)
+        return filtered
     end
-
-    # Launch kernel for each frame
-    kernel! = variance_weighted_gaussian_kernel!(backend)
-
-    for frame in 1:nframes
-        # Get views for this frame
-        input_frame = @view imagestack_dev[:, :, 1, frame]
-        output_frame = @view filtered_dev[:, :, 1, frame]
-
-        # Launch kernel
-        kernel!(output_frame, input_frame, variance_dev, sigma, winsize, ndrange=(nrows, ncols))
-    end
-
-    # Wait for kernel completion
-    KernelAbstractions.synchronize(backend)
-
-    # Transfer back from GPU if needed
-    if use_gpu && CUDA.functional()
-        filtered = Array(filtered_dev)
-    end
-
-    return filtered
 end
 
 

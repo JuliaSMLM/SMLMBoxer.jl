@@ -8,17 +8,39 @@ ROI batch with location tracking.
 - `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
 - `camera::Union{AbstractCamera,Nothing}`: Optional camera object (IdealCamera or SCMOSCamera) from SMLMData.
   If not provided, a default IdealCamera is created.
-- `boxsize::Int`: Size of the box to cut out around each local maximum (pixels).
-- `overlap::Real`: Amount of overlap allowed between boxes (pixels).
-- `sigma_small::Real`: Sigma for small Gaussian blur kernel (pixels).
-- `sigma_large::Real`: Sigma for large Gaussian blur kernel (pixels).
-- `minval::Real`: Minimum value to consider as a local maximum.
-- `use_gpu::Bool`: Perform convolution and local max finding on GPU.
+
+## Primary Interface (Recommended - PSF-Aware)
+- `psf_sigma::Real`: PSF sigma in microns (physical units, e.g., 0.13 for 130nm PSF).
+  Automatically converted to pixels using camera pixel size and sets optimal DoG filter parameters.
+  **Requires camera to be provided.**
+- `min_photons::Real`: Minimum total photons for detection (default: 500.0).
+  Automatically converted to appropriate intensity threshold.
+
+## Advanced Interface (Direct Control)
+For expert users who want direct control over filter parameters:
+- `sigma_small::Real`: Small Gaussian sigma in pixels (default: 1.0).
+- `sigma_large::Real`: Large Gaussian sigma in pixels (default: 2.0).
+- `minval::Real`: DoG filter intensity threshold (default: 0.0).
+
+Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
+
+## Other Parameters
+- `boxsize::Int`: Size of the box to cut out around each local maximum in pixels (default: 7).
+- `overlap::Real`: Maximum overlap allowed between boxes in pixels (default: 2.0).
+- `backend::Symbol`: Compute backend - `:cpu`, `:gpu`, or `:auto` (default: `:auto`).
+  - `:cpu` - Always use CPU
+  - `:gpu` - Require GPU, wait for memory if needed (waits forever by default)
+  - `:auto` - Try GPU with timeout, fall back to CPU if memory unavailable
+- `auto_timeout::Real`: Max seconds to wait for GPU memory in `:auto` mode (default: 30.0).
+- `gpu_timeout::Real`: Max seconds to wait for GPU memory in `:gpu` mode (default: Inf).
+- `on_wait::Function`: Optional callback `(elapsed, available, required) -> nothing` for wait progress.
+- `use_gpu::Bool`: DEPRECATED - use `backend` instead. If provided, `true` maps to `:auto`, `false` to `:cpu`.
 
 # Returns
 `ROIBatch` with the following fields:
 - `data`: ROI stack (boxsize × boxsize × n_rois) containing image patches
-- `corners`: (2 × n_rois) matrix of (x,y) = (col,row) corner positions in camera coordinates
+- `x_corners`: Vector of x (column) corner positions in camera coordinates
+- `y_corners`: Vector of y (row) corner positions in camera coordinates
 - `frame_indices`: Vector of frame indices for each ROI
 - `camera`: Camera object (provided or default IdealCamera)
 - `roi_size`: Size of each ROI (square)
@@ -28,6 +50,12 @@ ROI batch with location tracking.
 The image stack is convolved with a difference of Gaussians (DoG) filter
 to identify blobs and local maxima. The DoG is computed from two Gaussian
 kernels with standard deviations `sigma_small` and `sigma_large`.
+
+When using the PSF-aware interface with `psf_sigma` (in microns):
+- psf_sigma is converted to pixels using camera pixel size
+- sigma_small = 1.0 × psf_sigma_pixels (matches PSF for optimal blob detection)
+- sigma_large = 2.0 × psf_sigma_pixels (background suppression)
+- minval is automatically calculated from min_photons accounting for PSF spreading and DoG response
 
 ## Variance-Weighted Filtering (sCMOS)
 
@@ -56,15 +84,25 @@ out around each maximum, excluding overlaps.
 
 # Examples
 ```julia
-# Basic usage
-roi_batch = getboxes(imagestack; boxsize=7, overlap=2.0, sigma_small=1.0, sigma_large=2.0)
-boxes = roi_batch.data  # (7 × 7 × n_rois)
-corners = roi_batch.corners  # (2 × n_rois) [x;y] = [col;row]
+# Recommended: PSF-aware detection with physical units
+camera = IdealCamera(1:256, 1:256, 0.1f0)  # 256×256 pixels, 100nm pixel size
+
+roi_batch = getboxes(imagestack, camera;
+    psf_sigma = 0.13,              # PSF sigma in microns (physical units)
+    min_photons = 500.0,           # Detect emitters with ≥500 photons
+    boxsize = 11)
+
+# Access results
+boxes = roi_batch.data             # (11 × 11 × n_rois)
+x_corners = roi_batch.x_corners    # x (col) positions
+y_corners = roi_batch.y_corners    # y (row) positions
 frames = roi_batch.frame_indices
 
-# With camera for proper coordinate system
-camera = IdealCamera(1:256, 1:256, 0.1f0)  # npixels_x, npixels_y, pixel_size
-roi_batch = getboxes(imagestack, camera; boxsize=7, overlap=2.0)
+# Advanced: Direct control over filter parameters
+roi_batch = getboxes(imagestack;
+    sigma_small = 1.5,  # Custom small Gaussian sigma
+    sigma_large = 3.0,  # Custom large Gaussian sigma
+    minval = 10.0)      # Custom intensity threshold
 
 # Iterate over ROIs
 for roi in roi_batch
@@ -95,26 +133,36 @@ function _getboxes_impl(args::GetBoxesArgs)
   kernelsize = Int(floor(args.boxsize - args.overlap))
   kernelsize = max(minkernelsize, kernelsize)
 
-  # Determine whether to perform calculations on the GPU
-  args.use_gpu = args.use_gpu && has_cuda() && CUDA.functional()
+  # Determine backend with memory waiting
+  # Estimate memory needed for at least 1 frame (minimum batch)
+  nrows, ncols = size(imagestack, 1), size(imagestack, 2)
+  min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera)
+
+  actual_backend = select_backend(args.backend, min_memory_needed;
+      auto_timeout = args.auto_timeout,
+      gpu_timeout = args.gpu_timeout,
+      on_wait = args.on_wait)
+
+  args.use_gpu = (actual_backend == :gpu)
 
   if args.use_gpu
-      # Find the device with the most free memory
-      max_free_mem = 0
-      best_device = 0
-      for i in 0:length(CUDA.devices())-1
-          CUDA.device!(i)
-          free_mem = CUDA.available_memory()
-          if free_mem > max_free_mem
-              max_free_mem = free_mem
-              best_device = i
-          end
-      end
-      # Switch to the best device
-      CUDA.device!(best_device)
+      # Find and switch to the GPU with most free memory
+      find_best_gpu()
+      max_free_mem = CUDA.free_memory()
 
       # Check the size of the image stack
-      n_copies = 3 # 3x for the filtered stack, coords, and boxstack
+      # Memory multiplier for peak GPU usage during processing:
+      # Standard DoG: input + small_blurred + large_blurred + output = 4x peak
+      # LocalMax: filtered_stack + maxpooled + broadcast temps = 3x peak
+      # Variance-weighted (SCMOSCamera): needs MORE memory because:
+      #   - Input copy to GPU: 1x
+      #   - filtered_small output: 1x
+      #   - filtered_large output: 1x
+      #   - DoG result: 1x
+      #   - LocalMax temporaries: 2x
+      #   - GC timing margin: 2x
+      # Using 6x for standard, 10x for variance-weighted sCMOS path
+      n_copies = args.camera isa SCMOSCamera ? 10 : 6
       memory_required = sizeof(imagestack) * n_copies
 
       if memory_required <= max_free_mem
@@ -125,7 +173,7 @@ function _getboxes_impl(args::GetBoxesArgs)
           # If the image stack is too big, split it into smaller batches and process each batch separately
           memory_required_per_frame = size(imagestack, 1)*size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
           # println("Memory required per frame: ", memory_required_per_frame / 1024^3, " GB\n")
-          batch_size = Int(floor(max_free_mem / memory_required_per_frame))
+          batch_size = max(1, Int(floor(max_free_mem / memory_required_per_frame)))
 
           n_images = size(imagestack, 4)
           n_batches = Int(ceil(n_images / batch_size))
@@ -138,6 +186,14 @@ function _getboxes_impl(args::GetBoxesArgs)
               batch = imagestack[:, :,:, start_idx:end_idx]
               filtered_batch = dog_filter(batch, args)
               coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
+
+              # Offset frame indices for batched processing
+              # findlocalmax returns frame indices 1:batch_size, but we need actual frame numbers
+              frame_offset = start_idx - 1
+              for coord_matrix in coords_batch
+                  coord_matrix[:, 3] .+= frame_offset
+              end
+
               append!(coords, coords_batch)
           end
       end
@@ -155,14 +211,15 @@ function _getboxes_impl(args::GetBoxesArgs)
   boxstack, boxcoords, camera_rois = getboxstack(imagestack_cpu, maxcoords, args)
 
   # Create ROIBatch
-  # Convert boxcoords (row, col, frame) to corners (x, y) = (col, row) format
+  # Convert boxcoords (row, col, frame) to separate x_corners, y_corners vectors
   n_rois = size(boxstack, 3)
-  corners = Matrix{Int32}(undef, 2, n_rois)
+  x_corners = Vector{Int32}(undef, n_rois)
+  y_corners = Vector{Int32}(undef, n_rois)
   frame_indices = Vector{Int32}(undef, n_rois)
 
   for i in 1:n_rois
-    corners[1, i] = Int32(boxcoords[i, 2])  # x = col
-    corners[2, i] = Int32(boxcoords[i, 1])  # y = row
+    x_corners[i] = Int32(boxcoords[i, 2])  # x = col
+    y_corners[i] = Int32(boxcoords[i, 1])  # y = row
     frame_indices[i] = Int32(boxcoords[i, 3])
   end
 
@@ -179,7 +236,7 @@ function _getboxes_impl(args::GetBoxesArgs)
     )
   end
 
-  return ROIBatch(boxstack, corners, frame_indices, camera)
+  return ROIBatch(boxstack, x_corners, y_corners, frame_indices, camera)
 end
 
 
