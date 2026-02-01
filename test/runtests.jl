@@ -14,7 +14,7 @@ using Test
         image[30, 60] = 10
 
         # Get boxes without camera (positional interface)
-        roi_batch = getboxes(image;
+        (roi_batch, info) = getboxes(image;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
@@ -30,6 +30,12 @@ using Test
         @test hasfield(typeof(roi_batch), :y_corners)
         @test hasfield(typeof(roi_batch), :frame_indices)
         @test hasfield(typeof(roi_batch), :camera)
+
+        # Test BoxesInfo structure
+        @test info isa BoxesInfo
+        @test info.backend == :cpu
+        @test info.elapsed_ns > 0
+        @test info.device_id == -1
 
         # Should detect two peaks
         @test size(roi_batch.data) == (5, 5, 2)
@@ -54,7 +60,7 @@ using Test
         image[20, 50] = 20
         image[21, 51] = 10
 
-        roi_batch = getboxes(image;
+        (roi_batch, info) = getboxes(image;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
@@ -89,7 +95,7 @@ using Test
         )
 
         # Get boxes with camera
-        roi_batch = getboxes(image, camera;
+        (roi_batch, info) = getboxes(image, camera;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
@@ -135,7 +141,7 @@ using Test
             qe = 0.9f0
         )
 
-        roi_batch = getboxes(image, camera;
+        (roi_batch, info) = getboxes(image, camera;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
@@ -223,7 +229,7 @@ using Test
 
         # Use PSF-aware interface with physical units (microns)
         psf_sigma_microns = 0.13f0  # 130nm PSF
-        roi_batch = getboxes(image, camera;
+        (roi_batch, info) = getboxes(image, camera;
             psf_sigma = psf_sigma_microns,  # In microns (auto-converts to pixels)
             min_photons = 500.0,             # Should detect our 1000 photon peak
             boxsize = 11,
@@ -240,7 +246,7 @@ using Test
         @test roi_batch.y_corners[1] == 45  # y (row)
 
         # Test with higher threshold - should not detect
-        roi_batch_high = getboxes(image, camera;
+        (roi_batch_high, _) = getboxes(image, camera;
             psf_sigma = psf_sigma_microns,
             min_photons = 5000.0,  # Way above our peak
             boxsize = 11,
@@ -254,7 +260,7 @@ using Test
         image = zeros(Float32, 100, 100)
         image[20, 50] = 10
 
-        roi_batch = getboxes(image;
+        (roi_batch, info) = getboxes(image;
             boxsize = 5,
             sigma_small = 1.0,
             sigma_large = 2.0,
@@ -288,7 +294,7 @@ using Test
             qe = 0.9f0
         )
 
-        roi_batch = getboxes(image, camera;
+        (roi_batch, info) = getboxes(image, camera;
             boxsize=7,
             overlap=3.0,
             sigma_small=1.0,

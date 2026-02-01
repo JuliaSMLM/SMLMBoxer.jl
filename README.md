@@ -22,7 +22,7 @@ Pkg.add(url="https://github.com/JuliaSMLM/SMLMBoxer.jl")
 ```
 
 ## Usage
-The main function provided by the package is `getboxes()`, which detects particles or blobs in a multidimensional image stack and returns an `ROIBatch` containing detected regions centered around local maxima. The function uses a Difference of Gaussians (DoG) filter optimized for blob detection and is capable of GPU acceleration.
+The main function provided by the package is `getboxes()`, which detects particles or blobs in a multidimensional image stack and returns a tuple `(ROIBatch, BoxesInfo)` containing detected regions centered around local maxima and execution metadata. The function uses a Difference of Gaussians (DoG) filter optimized for blob detection and is capable of GPU acceleration.
 
 ### Example (Recommended - PSF-Aware Detection)
 ```julia
@@ -32,10 +32,13 @@ using SMLMBoxer, SMLMData
 camera = IdealCamera(1:256, 1:256, 0.1f0)  # 256×256 pixels, 100nm pixel size
 
 # Detect with PSF-aware parameters (physical units)
-roi_batch = getboxes(imagestack, camera;
+(rois, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,              # PSF sigma in microns (physical units)
     min_photons = 500.0,           # Minimum photon count to detect
     boxsize = 11)                  # ROI size in pixels
+
+# Check execution info
+println("Backend: $(info.backend), Time: $(info.elapsed_ns / 1e6) ms")
 ```
 
 ### Primary Parameters (PSF-Aware Interface)
@@ -67,13 +70,20 @@ For expert users who want direct control over the DoG filter:
 - `on_wait::Function`: Optional callback for wait progress reporting.
 
 ### Returns
-`ROIBatch` object with the following fields:
+A tuple `(rois, info)` where:
+
+`rois::ROIBatch` with the following fields:
 - `data`: ROI stack (boxsize × boxsize × n_rois) containing detected image patches.
 - `x_corners`: Vector of x (column) corner positions in camera coordinates.
 - `y_corners`: Vector of y (row) corner positions in camera coordinates.
 - `frame_indices`: Vector of frame indices for each ROI.
 - `camera`: Camera object for coordinate system tracking.
 - `roi_size`: Size of each ROI.
+
+`info::BoxesInfo` with the following fields:
+- `backend`: Compute backend used (`:gpu` or `:cpu`).
+- `elapsed_ns`: Wall time in nanoseconds.
+- `device_id`: GPU device ID used (-1 for CPU).
 
 ### How It Works
 The `getboxes()` function applies a Difference of Gaussians (DoG) filter to identify blob-like features. When using the PSF-aware interface, the filter scales are automatically matched to your PSF width for optimal detection sensitivity, and the photon threshold is converted to the appropriate intensity threshold accounting for PSF spreading and filter response.

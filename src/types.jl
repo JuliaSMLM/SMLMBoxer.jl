@@ -1,4 +1,20 @@
 """
+    BoxesInfo
+
+Metadata about `getboxes` execution.
+
+# Fields
+- `backend::Symbol`: Compute backend used (`:gpu` or `:cpu`)
+- `elapsed_ns::UInt64`: Wall time in nanoseconds
+- `device_id::Int`: GPU device ID used (-1 for CPU)
+"""
+struct BoxesInfo
+    backend::Symbol
+    elapsed_ns::UInt64
+    device_id::Int
+end
+
+"""
     get_pixel_size(camera::AbstractCamera)
 
 Extract pixel size from camera pixel edges (in microns).

@@ -40,7 +40,7 @@ imagestack = gen_images(smld, psf, poisson_noise=true, bg=10.0)
 
 ```julia
 # Detect using recommended PSF-aware interface
-roi_batch = getboxes(Float32.(imagestack), camera;
+(rois, info) = getboxes(Float32.(imagestack), camera;
     psf_sigma = 0.13,      # PSF sigma in microns
     min_photons = 500.0,   # Detection threshold
     boxsize = 11,          # ROI size
@@ -48,8 +48,9 @@ roi_batch = getboxes(Float32.(imagestack), camera;
 
 # Check results
 println("Ground truth: $(length(emitters)) emitters")
-println("Detected: $(length(roi_batch)) ROIs")
-println("Detection rate: $(length(roi_batch)/length(emitters)*100)%")
+println("Detected: $(length(rois)) ROIs")
+println("Detection rate: $(length(rois)/length(emitters)*100)%")
+println("Backend: $(info.backend), Time: $(info.elapsed_ns / 1e6) ms")
 ```
 
 ### Accessing Detection Results
@@ -58,13 +59,13 @@ println("Detection rate: $(length(roi_batch)/length(emitters)*100)%")
 # ROIBatch provides multiple access patterns
 
 # 1. Direct field access
-boxes = roi_batch.data              # (boxsize × boxsize × n_rois)
-x_positions = roi_batch.x_corners   # x (column) corners
-y_positions = roi_batch.y_corners   # y (row) corners
-frames = roi_batch.frame_indices    # frame numbers
+boxes = rois.data              # (boxsize × boxsize × n_rois)
+x_positions = rois.x_corners   # x (column) corners
+y_positions = rois.y_corners   # y (row) corners
+frames = rois.frame_indices    # frame numbers
 
 # 2. Iteration over SingleROI objects
-for (i, roi) in enumerate(roi_batch)
+for (i, roi) in enumerate(rois)
     println("ROI $i:")
     println("  Corner: ($(roi.corner[1]), $(roi.corner[2]))")
     println("  Frame: $(roi.frame_idx)")
@@ -73,7 +74,7 @@ for (i, roi) in enumerate(roi_batch)
 end
 
 # 3. Array-like indexing
-first_roi = roi_batch[1]  # Returns SingleROI
+first_roi = rois[1]  # Returns SingleROI
 println("First detection at ($(first_roi.corner[1]), $(first_roi.corner[2]))")
 ```
 
@@ -113,11 +114,13 @@ camera = SCMOSCamera(
 imagestack = gen_images(smld, psf, camera_noise=true, bg=10.0)
 
 # Detection automatically uses variance weighting for SCMOSCamera
-roi_batch = getboxes(Float32.(imagestack), camera;
+(rois, info) = getboxes(Float32.(imagestack), camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
     boxsize = 11,
     use_gpu = true)  # GPU acceleration for variance weighting
+
+println("Used $(info.backend) backend")
 
 # Analyze detection uniformity across noise regions
 function count_by_noise_region(batch, n_pixels, split_col)
@@ -133,7 +136,7 @@ function count_by_noise_region(batch, n_pixels, split_col)
     return low_noise, high_noise
 end
 
-low, high = count_by_noise_region(roi_batch, n_pixels, n_pixels÷2)
+low, high = count_by_noise_region(rois, n_pixels, n_pixels÷2)
 println("Low-noise region detections: $low")
 println("High-noise region detections: $high")
 ```
@@ -146,7 +149,7 @@ For expert users who want precise control over filter parameters.
 
 ```julia
 # Direct control over DoG filter sigmas and threshold
-roi_batch = getboxes(imagestack;
+(rois, info) = getboxes(imagestack;
     sigma_small = 1.5,  # Small Gaussian sigma (pixels)
     sigma_large = 3.0,  # Large Gaussian sigma (pixels)
     minval = 15.0,      # DoG intensity threshold
@@ -165,13 +168,13 @@ sigma_values = [1.0, 1.3, 1.5, 2.0]
 results = []
 
 for sigma in sigma_values
-    roi_batch = getboxes(imagestack, camera;
+    (rois, _) = getboxes(imagestack, camera;
         sigma_small = sigma,
         sigma_large = 2.0 * sigma,
         minval = 10.0,
         use_gpu = false)
 
-    push!(results, (sigma=sigma, n_detected=length(roi_batch)))
+    push!(results, (sigma=sigma, n_detected=length(rois)))
 end
 
 # Find optimal sigma
@@ -198,19 +201,23 @@ else
 end
 
 # GPU acceleration enabled by default
-roi_batch_gpu = getboxes(imagestack, camera;
+(rois_gpu, info_gpu) = getboxes(imagestack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
     use_gpu = true)  # Automatically uses GPU if available
 
+println("Used $(info_gpu.backend) backend")
+
 # Benchmark GPU vs CPU
 using BenchmarkTools
 
-@time roi_batch_cpu = getboxes(imagestack, camera;
+(rois_cpu, info_cpu) = getboxes(imagestack, camera;
     psf_sigma = 0.13, min_photons = 500.0, use_gpu = false)
+println("CPU time: $(info_cpu.elapsed_ns / 1e6) ms")
 
-@time roi_batch_gpu = getboxes(imagestack, camera;
+(rois_gpu, info_gpu) = getboxes(imagestack, camera;
     psf_sigma = 0.13, min_photons = 500.0, use_gpu = true)
+println("GPU time: $(info_gpu.elapsed_ns / 1e6) ms")
 ```
 
 ### Large Dataset Processing
@@ -220,13 +227,14 @@ using BenchmarkTools
 large_stack = zeros(Float32, 512, 512, 1000)  # 1000 frames
 
 # Automatic batching handles memory constraints
-roi_batch = getboxes(large_stack, camera;
+(rois, info) = getboxes(large_stack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
     use_gpu = true)  # Batches frames to fit GPU memory
 
 println("Processed $(size(large_stack, 3)) frames")
-println("Total detections: $(length(roi_batch))")
+println("Total detections: $(length(rois))")
+println("Backend: $(info.backend), Time: $(info.elapsed_ns / 1e9) s")
 ```
 
 ## Integration with Downstream Analysis
@@ -235,14 +243,15 @@ println("Total detections: $(length(roi_batch))")
 
 ```julia
 # ROIBatch integrates directly with SMLMData fitting pipelines
+(rois, info) = getboxes(imagestack, camera; psf_sigma=0.13, min_photons=500.0)
 
 # Example: Filter ROIs by intensity before fitting
 min_intensity = 100.0
-filtered_rois = filter(roi_batch) do roi
+filtered_rois = filter(rois) do roi
     sum(roi.data) > min_intensity
 end
 
-println("Kept $(length(filtered_rois))/$(length(roi_batch)) ROIs")
+println("Kept $(length(filtered_rois))/$(length(rois)) ROIs")
 
 # ROIs maintain coordinate information for fitting
 for roi in filtered_rois
@@ -258,11 +267,11 @@ end
 
 ```julia
 # Convert corner positions to approximate centers
-roi_size = roi_batch.roi_size
+roi_size = rois.roi_size
 center_offset = roi_size ÷ 2
 
-x_centers = roi_batch.x_corners .+ center_offset
-y_centers = roi_batch.y_corners .+ center_offset
+x_centers = rois.x_corners .+ center_offset
+y_centers = rois.y_corners .+ center_offset
 
 # Convert to physical coordinates (microns)
 pixel_size = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
@@ -281,13 +290,13 @@ println("First detection center: ($(x_microns[1]), $(y_microns[1])) μm")
 n_frames = size(imagestack, 3)
 
 # getboxes processes entire stack and tracks frame indices
-roi_batch = getboxes(imagestack, camera;
+(rois, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0)
 
 # Group detections by frame
 using StatsBase
-detections_per_frame = countmap(roi_batch.frame_indices)
+detections_per_frame = countmap(rois.frame_indices)
 
 println("Frame-by-frame detection counts:")
 for frame in sort(collect(keys(detections_per_frame)))
@@ -299,11 +308,11 @@ end
 
 ```julia
 # Filter detections by quality metrics
-function filter_by_quality(roi_batch; min_snr=3.0)
+function filter_by_quality(rois; min_snr=3.0)
     keep_indices = Int[]
 
-    for i in 1:length(roi_batch)
-        roi = roi_batch[i]
+    for i in 1:length(rois)
+        roi = rois[i]
 
         # Calculate simple SNR estimate
         sorted_pixels = sort(vec(roi.data))
@@ -318,12 +327,13 @@ function filter_by_quality(roi_batch; min_snr=3.0)
         end
     end
 
-    return roi_batch[keep_indices]
+    return rois[keep_indices]
 end
 
 # Apply filtering
-high_quality_rois = filter_by_quality(roi_batch, min_snr=5.0)
-println("Kept $(length(high_quality_rois))/$(length(roi_batch)) high-quality ROIs")
+(rois, info) = getboxes(imagestack, camera; psf_sigma=0.13, min_photons=500.0)
+high_quality_rois = filter_by_quality(rois, min_snr=5.0)
+println("Kept $(length(high_quality_rois))/$(length(rois)) high-quality ROIs")
 ```
 
 ### Batch Processing Multiple Files
@@ -338,12 +348,12 @@ for (i, path) in enumerate(file_paths)
     imagestack = load_image_stack(path)
 
     # Detect
-    roi_batch = getboxes(imagestack, camera;
+    (rois, info) = getboxes(imagestack, camera;
         psf_sigma = 0.13,
         min_photons = 500.0)
 
-    println("File $i: $(length(roi_batch)) detections")
-    push!(all_detections, roi_batch)
+    println("File $i: $(length(rois)) detections ($(info.elapsed_ns / 1e6) ms)")
+    push!(all_detections, rois)
 end
 
 # Combine results for aggregate analysis
