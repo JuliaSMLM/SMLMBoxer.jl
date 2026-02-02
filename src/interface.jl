@@ -216,10 +216,49 @@ function _getboxes_impl(args::GetBoxesArgs)
 
       CUDA.synchronize()
   else
-      filtered_stack = dog_filter(imagestack, args)
-      coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
+      # CPU path with memory-aware batching (mirrors GPU batching logic)
+      max_free_mem = Sys.free_memory()
+      n_copies = args.camera isa SCMOSCamera ? 10 : 6
+      memory_required = sizeof(imagestack) * n_copies
+
+      if memory_required <= max_free_mem
+          # If the image stack fits in memory, perform the operation on the whole stack
+          filtered_stack = dog_filter(imagestack, args)
+          coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
+      else
+          # If the image stack is too big, split it into smaller batches and process each batch separately
+          memory_required_per_frame = size(imagestack, 1)*size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
+          batch_size = max(1, Int(floor(max_free_mem / memory_required_per_frame)))
+
+          n_images = size(imagestack, 4)
+          n_batches = Int(ceil(n_images / batch_size))
+
+          coords = Vector{Matrix{Float32}}(undef, 0)
+
+          for i in 1:n_batches
+              start_idx = (i-1)*batch_size + 1
+              end_idx = min(i*batch_size, n_images)
+              batch = imagestack[:, :, :, start_idx:end_idx]
+              filtered_batch = dog_filter(batch, args)
+              coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
+
+              # Offset frame indices for batched processing
+              # findlocalmax returns frame indices 1:batch_size, but we need actual frame numbers
+              frame_offset = start_idx - 1
+              for coord_matrix in coords_batch
+                  coord_matrix[:, 3] .+= frame_offset
+              end
+
+              append!(coords, coords_batch)
+
+              # Release batch memory before next iteration
+              filtered_batch = nothing
+              batch = nothing
+              GC.gc(false)  # Non-full GC to release recent allocations
+          end
+      end
   end
-  
+
   maxcoords = removeoverlap(coords, args)
 
   # Ensure imagestack is on CPU for box extraction (uses scalar indexing)
