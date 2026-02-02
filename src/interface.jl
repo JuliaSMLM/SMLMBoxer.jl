@@ -157,8 +157,11 @@ function _getboxes_impl(args::GetBoxesArgs)
 
   args.use_gpu = (actual_backend == :gpu)
 
-  # Track device for BoxesInfo
+  # Track device and batch info for BoxesInfo
   device_id = -1  # CPU default
+  batch_size = 0
+  n_batches = 0
+  memory_per_batch = 0
 
   if args.use_gpu
       # Find and switch to the GPU with most free memory
@@ -185,15 +188,19 @@ function _getboxes_impl(args::GetBoxesArgs)
           # If the image stack fits in memory, perform the operation on the whole stack
           filtered_stack = dog_filter(imagestack, args)
           coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
+          # Track batch info for single-batch case
+          batch_size = size(imagestack, 4)
+          n_batches = 1
+          memory_per_batch = memory_required
       else
           # If the image stack is too big, split it into smaller batches and process each batch separately
           memory_required_per_frame = size(imagestack, 1)*size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
-          # println("Memory required per frame: ", memory_required_per_frame / 1024^3, " GB\n")
           batch_size = max(1, Int(floor(max_free_mem / memory_required_per_frame)))
 
           n_images = size(imagestack, 4)
           n_batches = Int(ceil(n_images / batch_size))
-          
+          memory_per_batch = batch_size * memory_required_per_frame
+
           coords = Vector{Matrix{Float32}}(undef, 0)
 
           for i in 1:n_batches
@@ -225,6 +232,10 @@ function _getboxes_impl(args::GetBoxesArgs)
           # If the image stack fits in memory, perform the operation on the whole stack
           filtered_stack = dog_filter(imagestack, args)
           coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
+          # Track batch info for single-batch case
+          batch_size = size(imagestack, 4)
+          n_batches = 1
+          memory_per_batch = memory_required
       else
           # If the image stack is too big, split it into smaller batches and process each batch separately
           memory_required_per_frame = size(imagestack, 1)*size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
@@ -232,6 +243,7 @@ function _getboxes_impl(args::GetBoxesArgs)
 
           n_images = size(imagestack, 4)
           n_batches = Int(ceil(n_images / batch_size))
+          memory_per_batch = batch_size * memory_required_per_frame
 
           coords = Vector{Matrix{Float32}}(undef, 0)
 
@@ -293,7 +305,7 @@ function _getboxes_impl(args::GetBoxesArgs)
 
   roi_batch = ROIBatch(boxstack, x_corners, y_corners, frame_indices, camera)
   elapsed_ns = time_ns() - start_ns
-  info = BoxesInfo(actual_backend, elapsed_ns, device_id)
+  info = BoxesInfo(actual_backend, elapsed_ns, device_id, n_rois, batch_size, n_batches, memory_per_batch)
 
   return (roi_batch, info)
 end
