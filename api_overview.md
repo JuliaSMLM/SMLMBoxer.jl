@@ -4,8 +4,9 @@ Particle/blob detection in SMLM image stacks using difference-of-Gaussians filte
 
 ## Exports
 
-**Total exports:** 4
+**Total exports:** 5
 - `getboxes` - Main detection function
+- `BoxesInfo` - Metadata struct returned alongside ROIBatch
 - `recommend_batch_size` - Memory-aware batch sizing utility
 - `ROIBatch` - Re-exported from SMLMData.jl
 - `SingleROI` - Re-exported from SMLMData.jl
@@ -41,7 +42,7 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 
 ## Core Function
 
-### `getboxes(imagestack, camera=nothing; kwargs...) -> ROIBatch`
+### `getboxes(imagestack, camera=nothing; kwargs...) -> (ROIBatch, BoxesInfo)`
 
 Main detection function. Applies DoG filtering, finds local maxima, extracts ROI patches.
 
@@ -69,13 +70,20 @@ Main detection function. Applies DoG filtering, finds local maxima, extracts ROI
 - `gpu_timeout::Real` - Max seconds to wait in `:gpu` mode (default: Inf)
 - `on_wait::Function` - Optional callback `(elapsed, available, required) -> nothing` for wait progress
 
-**Returns:** `ROIBatch` with fields:
+**Returns:** Tuple of `(ROIBatch, BoxesInfo)`
+
+`ROIBatch` with fields:
 - `data` - ROI stack (boxsize × boxsize × n_rois)
 - `x_corners` - Vector of x (column) corner positions
 - `y_corners` - Vector of y (row) corner positions
 - `frame_indices` - Vector of frame indices for each ROI
 - `camera` - Camera object (provided or default IdealCamera)
 - `roi_size` - Size of each ROI (square)
+
+`BoxesInfo` with fields:
+- `backend` - Compute backend used (`:gpu` or `:cpu`)
+- `elapsed_ns` - Wall time in nanoseconds
+- `device_id` - GPU device ID (0-based), or -1 for CPU
 
 ### `recommend_batch_size(height, width; backend=:auto, memory_fraction=0.8) -> Int`
 
@@ -112,7 +120,7 @@ println("Load up to $max_frames frames at a time")
 for chunk_start in 1:max_frames:total_frames
     chunk_end = min(chunk_start + max_frames - 1, total_frames)
     imagestack = load_frames(chunk_start:chunk_end)
-    roi_batch = getboxes(imagestack, camera; psf_sigma=0.13)
+    (roi_batch, info) = getboxes(imagestack, camera; psf_sigma=0.13)
     # ... process results
 end
 ```
@@ -146,7 +154,7 @@ using SMLMBoxer, SMLMData
 camera = IdealCamera(1:256, 1:256, 0.1f0)
 
 # Detect particles with PSF-aware thresholding
-roi_batch = getboxes(imagestack, camera;
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,        # 130nm PSF in microns
     min_photons = 500.0,     # Minimum 500 photons
     boxsize = 11)
@@ -157,6 +165,10 @@ boxes = roi_batch.data              # 11×11×n ROI patches
 positions_x = roi_batch.x_corners   # Column positions
 positions_y = roi_batch.y_corners   # Row positions
 frames = roi_batch.frame_indices
+
+# Check processing info
+println("Backend: ", info.backend)
+println("Elapsed: ", info.elapsed_ns / 1e6, " ms")
 ```
 
 ### sCMOS Variance-Weighted Detection
@@ -168,7 +180,7 @@ readnoise_map = Float32.(load_readnoise_calibration("camera_calib.mat"))
 camera = SCMOSCamera(256, 256, 0.1f0, readnoise_map)
 
 # Variance-weighted detection (automatically enabled)
-roi_batch = getboxes(imagestack, camera;
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,
     min_photons = 300.0,  # Lower threshold possible with noise weighting
     backend = :auto)      # GPU with CPU fallback
@@ -177,7 +189,7 @@ roi_batch = getboxes(imagestack, camera;
 ### Advanced: Direct Parameter Control
 ```julia
 # Expert mode: bypass PSF-aware interface
-roi_batch = getboxes(imagestack;
+(roi_batch, info) = getboxes(imagestack;
     sigma_small = 1.5,   # Custom filter sigma (pixels)
     sigma_large = 3.0,
     minval = 10.0,       # Direct intensity threshold
@@ -187,7 +199,7 @@ roi_batch = getboxes(imagestack;
 
 ### Processing Individual ROIs
 ```julia
-roi_batch = getboxes(imagestack, camera; psf_sigma=0.13)
+(roi_batch, info) = getboxes(imagestack, camera; psf_sigma=0.13)
 
 # Iterate over ROIs
 for roi in roi_batch
@@ -196,7 +208,7 @@ for roi in roi_batch
     # - roi.corner: (x, y) corner position
     # - roi.frame_idx: Frame index
     # - roi.camera: Camera ROI calibration
-    
+
     fit_gaussian(roi.data)
 end
 

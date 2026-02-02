@@ -80,7 +80,7 @@ Benchmark getboxes with warmup and multiple runs.
 function benchmark_getboxes(image, camera; use_gpu=false, nwarmup=WARMUP_ITERATIONS, nruns=BENCHMARK_RUNS)
     # Warmup
     for _ in 1:nwarmup
-        result = getboxes(image, camera;
+        (result, _) = getboxes(image, camera;
             boxsize=7,
             overlap=3.0,
             sigma_small=1.0,
@@ -101,7 +101,7 @@ function benchmark_getboxes(image, camera; use_gpu=false, nwarmup=WARMUP_ITERATI
         end
 
         t0 = time()
-        result = getboxes(image, camera;
+        (result, _) = getboxes(image, camera;
             boxsize=7,
             overlap=3.0,
             sigma_small=1.0,

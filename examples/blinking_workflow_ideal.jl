@@ -140,15 +140,14 @@ println("  Detection threshold: 50 photons (matched to framerate)")
 println()
 
 # Detect using PSF-aware interface with physical units
-t_start = time()
-roi_batch = getboxes(images, camera;
+(roi_batch, info) = getboxes(images, camera;
     psf_sigma = sim_params.σ_psf,  # PSF sigma in microns (auto-converts to pixels)
     min_photons = 50.0,             # Photon threshold (auto-converts to intensity)
     boxsize = 11,                   # 11×11 pixel ROIs
     overlap = 3.0,                  # Max 3 pixel overlap
     use_gpu = false                 # Use CPU (set to true if CUDA available)
 )
-t_detect = time() - t_start
+t_detect = info.elapsed_ns / 1e9
 
 n_detected = length(roi_batch)
 

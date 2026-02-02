@@ -106,42 +106,40 @@ println()
 
 # Detect on clean image (CPU)
 println("  Running on clean image (CPU)...")
-t_start = time()
-roi_batch_clean = getboxes(img_clean, camera;
+(roi_batch_clean, info_clean) = getboxes(img_clean, camera;
     psf_sigma = psf_sigma_pixels,  # PSF-aware detection
     min_photons = 500.0,            # Detect emitters with ≥500 photons
     boxsize = 11,                   # Larger box for better fitting
     overlap = 3.0,
     use_gpu = false
 )
-t_clean = time() - t_start
+t_clean = info_clean.elapsed_ns / 1e9
 
 # Detect on noisy image (CPU)
 println("  Running on noisy image (CPU)...")
-t_start = time()
-roi_batch_noisy = getboxes(img_noisy, camera;
+(roi_batch_noisy, info_noisy) = getboxes(img_noisy, camera;
     psf_sigma = psf_sigma_pixels,
     min_photons = 500.0,
     boxsize = 11,
     overlap = 3.0,
     use_gpu = false
 )
-t_noisy = time() - t_start
+t_noisy = info_noisy.elapsed_ns / 1e9
 
 # Try GPU if available
 if CUDA.functional()
     println("  Running on noisy image (GPU)...")
-    t_start = time()
-    roi_batch_gpu = getboxes(img_noisy, camera;
+    (roi_batch_gpu, info_gpu) = getboxes(img_noisy, camera;
         psf_sigma = psf_sigma_pixels,
         min_photons = 500.0,
         boxsize = 11,
         overlap = 3.0,
         use_gpu = true
     )
-    t_gpu = time() - t_start
+    t_gpu = info_gpu.elapsed_ns / 1e9
 else
     roi_batch_gpu = nothing
+    info_gpu = nothing
     t_gpu = NaN
 end
 

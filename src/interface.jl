@@ -1,8 +1,8 @@
 """
-    getboxes(imagestack, camera=nothing; kwargs...) -> ROIBatch
+    getboxes(imagestack, camera=nothing; kwargs...) -> (ROIBatch, BoxesInfo)
 
 Detect particles/blobs in a multidimensional image stack and return
-ROI batch with location tracking.
+ROI batch with location tracking and processing metadata.
 
 # Arguments
 - `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
@@ -37,6 +37,8 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 - `use_gpu::Bool`: DEPRECATED - use `backend` instead. If provided, `true` maps to `:auto`, `false` to `:cpu`.
 
 # Returns
+Tuple of `(ROIBatch, BoxesInfo)`:
+
 `ROIBatch` with the following fields:
 - `data`: ROI stack (boxsize × boxsize × n_rois) containing image patches
 - `x_corners`: Vector of x (column) corner positions in camera coordinates
@@ -44,6 +46,11 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 - `frame_indices`: Vector of frame indices for each ROI
 - `camera`: Camera object (provided or default IdealCamera)
 - `roi_size`: Size of each ROI (square)
+
+`BoxesInfo` with the following fields:
+- `backend`: Compute backend used (:gpu or :cpu)
+- `elapsed_ns`: Wall time in nanoseconds
+- `device_id`: GPU device ID (0-based), or -1 for CPU
 
 # Details on filtering
 
@@ -87,7 +94,7 @@ out around each maximum, excluding overlaps.
 # Recommended: PSF-aware detection with physical units
 camera = IdealCamera(1:256, 1:256, 0.1f0)  # 256×256 pixels, 100nm pixel size
 
-roi_batch = getboxes(imagestack, camera;
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,              # PSF sigma in microns (physical units)
     min_photons = 500.0,           # Detect emitters with ≥500 photons
     boxsize = 11)
@@ -98,8 +105,12 @@ x_corners = roi_batch.x_corners    # x (col) positions
 y_corners = roi_batch.y_corners    # y (row) positions
 frames = roi_batch.frame_indices
 
+# Check processing info
+println("Backend: ", info.backend)
+println("Elapsed: ", info.elapsed_ns / 1e6, " ms")
+
 # Advanced: Direct control over filter parameters
-roi_batch = getboxes(imagestack;
+(roi_batch, info) = getboxes(imagestack;
     sigma_small = 1.5,  # Custom small Gaussian sigma
     sigma_large = 3.0,  # Custom large Gaussian sigma
     minval = 10.0)      # Custom intensity threshold
@@ -126,6 +137,7 @@ end
 Internal implementation of getboxes that does the actual work.
 """
 function _getboxes_impl(args::GetBoxesArgs)
+  start_ns = time_ns()
 
   imagestack = reshape_for_flux(args.imagestack)
 
@@ -145,9 +157,13 @@ function _getboxes_impl(args::GetBoxesArgs)
 
   args.use_gpu = (actual_backend == :gpu)
 
+  # Track device for BoxesInfo
+  device_id = -1  # CPU default
+
   if args.use_gpu
       # Find and switch to the GPU with most free memory
       find_best_gpu()
+      device_id = Int(CUDA.device().handle)  # 0-based GPU device ID
       max_free_mem = CUDA.free_memory()
 
       # Check the size of the image stack
@@ -236,7 +252,11 @@ function _getboxes_impl(args::GetBoxesArgs)
     )
   end
 
-  return ROIBatch(boxstack, x_corners, y_corners, frame_indices, camera)
+  roi_batch = ROIBatch(boxstack, x_corners, y_corners, frame_indices, camera)
+  elapsed_ns = time_ns() - start_ns
+  info = BoxesInfo(actual_backend, elapsed_ns, device_id)
+
+  return (roi_batch, info)
 end
 
 

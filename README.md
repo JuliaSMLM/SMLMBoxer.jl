@@ -32,10 +32,13 @@ using SMLMBoxer, SMLMData
 camera = IdealCamera(1:256, 1:256, 0.1f0)  # 256×256 pixels, 100nm pixel size
 
 # Detect with PSF-aware parameters (physical units)
-roi_batch = getboxes(imagestack, camera;
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,              # PSF sigma in microns (physical units)
     min_photons = 500.0,           # Minimum photon count to detect
     boxsize = 11)                  # ROI size in pixels
+
+# info contains: backend, elapsed_ns, device_id
+println("Processed in ", info.elapsed_ns / 1e6, " ms on ", info.backend)
 ```
 
 ### Primary Parameters (PSF-Aware Interface)
@@ -67,13 +70,20 @@ For expert users who want direct control over the DoG filter:
 - `on_wait::Function`: Optional callback for wait progress reporting.
 
 ### Returns
-`ROIBatch` object with the following fields:
+Tuple of `(ROIBatch, BoxesInfo)`:
+
+**ROIBatch** with the following fields:
 - `data`: ROI stack (boxsize × boxsize × n_rois) containing detected image patches.
 - `x_corners`: Vector of x (column) corner positions in camera coordinates.
 - `y_corners`: Vector of y (row) corner positions in camera coordinates.
 - `frame_indices`: Vector of frame indices for each ROI.
 - `camera`: Camera object for coordinate system tracking.
 - `roi_size`: Size of each ROI.
+
+**BoxesInfo** with processing metadata:
+- `backend`: Compute backend used (`:gpu` or `:cpu`)
+- `elapsed_ns`: Wall time in nanoseconds
+- `device_id`: GPU device ID (0-based), or -1 for CPU
 
 ### How It Works
 The `getboxes()` function applies a Difference of Gaussians (DoG) filter to identify blob-like features. When using the PSF-aware interface, the filter scales are automatically matched to your PSF width for optimal detection sensitivity, and the photon threshold is converted to the appropriate intensity threshold accounting for PSF spreading and filter response.
