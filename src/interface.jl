@@ -136,6 +136,72 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
 end
 
 """
+    _process_with_batching(imagestack, args, kernelsize, max_free_mem; use_gpu, batch_cleanup=nothing)
+
+Process imagestack with memory-aware batching. Handles both single-batch (fits in memory)
+and multi-batch (too large) cases.
+
+Returns `(coords, batch_size, n_batches, memory_per_batch)`.
+
+# Arguments
+- `imagestack`: 4D image stack (ny, nx, 1, nframes)
+- `args`: GetBoxesArgs with filter parameters
+- `kernelsize`: Kernel size for local max detection
+- `max_free_mem`: Available memory in bytes
+- `use_gpu`: Whether to use GPU for processing
+- `batch_cleanup`: Optional function called after each batch (e.g., for GC)
+"""
+function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
+                                 use_gpu::Bool, batch_cleanup::Union{Function,Nothing}=nothing)
+    # Memory multiplier: 6x for standard DoG, 10x for variance-weighted sCMOS
+    n_copies = args.camera isa SCMOSCamera ? 10 : 6
+    memory_required = sizeof(imagestack) * n_copies
+
+    if memory_required <= max_free_mem
+        # Single batch: process whole stack
+        filtered_stack = dog_filter(imagestack, args)
+        coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=use_gpu)
+        batch_size = size(imagestack, 4)
+        n_batches = 1
+        memory_per_batch = memory_required
+    else
+        # Multi-batch: split into smaller chunks
+        memory_per_frame = size(imagestack, 1) * size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
+        batch_size = max(1, Int(floor(max_free_mem / memory_per_frame)))
+        n_images = size(imagestack, 4)
+        n_batches = Int(ceil(n_images / batch_size))
+        memory_per_batch = batch_size * memory_per_frame
+
+        coords = Vector{Matrix{Float32}}(undef, 0)
+
+        for i in 1:n_batches
+            start_idx = (i - 1) * batch_size + 1
+            end_idx = min(i * batch_size, n_images)
+            batch = imagestack[:, :, :, start_idx:end_idx]
+            filtered_batch = dog_filter(batch, args)
+            coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=use_gpu)
+
+            # Offset frame indices to actual frame numbers
+            frame_offset = start_idx - 1
+            for coord_matrix in coords_batch
+                coord_matrix[:, 3] .+= frame_offset
+            end
+
+            append!(coords, coords_batch)
+
+            # Optional cleanup between batches (e.g., GC for CPU path)
+            if batch_cleanup !== nothing
+                filtered_batch = nothing
+                batch = nothing
+                batch_cleanup()
+            end
+        end
+    end
+
+    return coords, batch_size, n_batches, memory_per_batch
+end
+
+"""
     _getboxes_impl(args::GetBoxesArgs)
 
 Internal implementation of getboxes that does the actual work.
@@ -168,111 +234,23 @@ function _getboxes_impl(args::GetBoxesArgs)
   memory_per_batch = 0
 
   if args.use_gpu
-      # Find and switch to the GPU with most free memory
+      # GPU path
       find_best_gpu()
-      device_id = Int(CUDA.device().handle)  # 0-based GPU device ID
+      device_id = Int(CUDA.device().handle)
       max_free_mem = CUDA.free_memory()
 
-      # Check the size of the image stack
-      # Memory multiplier for peak GPU usage during processing:
-      # Standard DoG: input + small_blurred + large_blurred + output = 4x peak
-      # LocalMax: filtered_stack + maxpooled + broadcast temps = 3x peak
-      # Variance-weighted (SCMOSCamera): needs MORE memory because:
-      #   - Input copy to GPU: 1x
-      #   - filtered_small output: 1x
-      #   - filtered_large output: 1x
-      #   - DoG result: 1x
-      #   - LocalMax temporaries: 2x
-      #   - GC timing margin: 2x
-      # Using 6x for standard, 10x for variance-weighted sCMOS path
-      n_copies = args.camera isa SCMOSCamera ? 10 : 6
-      memory_required = sizeof(imagestack) * n_copies
-
-      if memory_required <= max_free_mem
-          # If the image stack fits in memory, perform the operation on the whole stack
-          filtered_stack = dog_filter(imagestack, args)
-          coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
-          # Track batch info for single-batch case
-          batch_size = size(imagestack, 4)
-          n_batches = 1
-          memory_per_batch = memory_required
-      else
-          # If the image stack is too big, split it into smaller batches and process each batch separately
-          memory_required_per_frame = size(imagestack, 1)*size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
-          batch_size = max(1, Int(floor(max_free_mem / memory_required_per_frame)))
-
-          n_images = size(imagestack, 4)
-          n_batches = Int(ceil(n_images / batch_size))
-          memory_per_batch = batch_size * memory_required_per_frame
-
-          coords = Vector{Matrix{Float32}}(undef, 0)
-
-          for i in 1:n_batches
-              start_idx = (i-1)*batch_size + 1
-              end_idx = min(i*batch_size, n_images)
-              batch = imagestack[:, :,:, start_idx:end_idx]
-              filtered_batch = dog_filter(batch, args)
-              coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
-
-              # Offset frame indices for batched processing
-              # findlocalmax returns frame indices 1:batch_size, but we need actual frame numbers
-              frame_offset = start_idx - 1
-              for coord_matrix in coords_batch
-                  coord_matrix[:, 3] .+= frame_offset
-              end
-
-              append!(coords, coords_batch)
-          end
-      end
+      coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
+          imagestack, args, kernelsize, max_free_mem; use_gpu=true)
 
       CUDA.synchronize()
   else
-      # CPU path with memory-aware batching (mirrors GPU batching logic)
+      # CPU path with GC cleanup between batches
       max_free_mem = Sys.free_memory()
-      n_copies = args.camera isa SCMOSCamera ? 10 : 6
-      memory_required = sizeof(imagestack) * n_copies
 
-      if memory_required <= max_free_mem
-          # If the image stack fits in memory, perform the operation on the whole stack
-          filtered_stack = dog_filter(imagestack, args)
-          coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
-          # Track batch info for single-batch case
-          batch_size = size(imagestack, 4)
-          n_batches = 1
-          memory_per_batch = memory_required
-      else
-          # If the image stack is too big, split it into smaller batches and process each batch separately
-          memory_required_per_frame = size(imagestack, 1)*size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
-          batch_size = max(1, Int(floor(max_free_mem / memory_required_per_frame)))
-
-          n_images = size(imagestack, 4)
-          n_batches = Int(ceil(n_images / batch_size))
-          memory_per_batch = batch_size * memory_required_per_frame
-
-          coords = Vector{Matrix{Float32}}(undef, 0)
-
-          for i in 1:n_batches
-              start_idx = (i-1)*batch_size + 1
-              end_idx = min(i*batch_size, n_images)
-              batch = imagestack[:, :, :, start_idx:end_idx]
-              filtered_batch = dog_filter(batch, args)
-              coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=args.use_gpu)
-
-              # Offset frame indices for batched processing
-              # findlocalmax returns frame indices 1:batch_size, but we need actual frame numbers
-              frame_offset = start_idx - 1
-              for coord_matrix in coords_batch
-                  coord_matrix[:, 3] .+= frame_offset
-              end
-
-              append!(coords, coords_batch)
-
-              # Release batch memory before next iteration
-              filtered_batch = nothing
-              batch = nothing
-              GC.gc(false)  # Non-full GC to release recent allocations
-          end
-      end
+      coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
+          imagestack, args, kernelsize, max_free_mem;
+          use_gpu=false,
+          batch_cleanup=() -> GC.gc(false))
   end
 
   maxcoords = removeoverlap(coords, args)
