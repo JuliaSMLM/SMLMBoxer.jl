@@ -37,8 +37,8 @@ camera = IdealCamera(1:256, 1:256, 0.1f0)  # 256×256 pixels, 100nm pixel size
     min_photons = 500.0,           # Minimum photon count to detect
     boxsize = 11)                  # ROI size in pixels
 
-# info contains: backend, elapsed_ns, device_id
-println("Processed in ", info.elapsed_ns / 1e6, " ms on ", info.backend)
+# info contains: backend, elapsed_s, device_id, n_rois, batch_size, n_batches, memory_per_batch
+println("Processed in ", info.elapsed_s * 1000, " ms on ", info.backend)
 ```
 
 ### Primary Parameters (PSF-Aware Interface)
@@ -82,8 +82,12 @@ Tuple of `(ROIBatch, BoxesInfo)`:
 
 **BoxesInfo** with processing metadata:
 - `backend`: Compute backend used (`:gpu` or `:cpu`)
-- `elapsed_ns`: Wall time in nanoseconds
+- `elapsed_s`: Wall time in seconds
 - `device_id`: GPU device ID (0-based), or -1 for CPU
+- `n_rois`: Number of ROIs detected
+- `batch_size`: Frames per batch during processing
+- `n_batches`: Number of batches processed
+- `memory_per_batch`: Estimated memory per batch in bytes
 
 ### How It Works
 The `getboxes()` function applies a Difference of Gaussians (DoG) filter to identify blob-like features. When using the PSF-aware interface, the filter scales are automatically matched to your PSF width for optimal detection sensitivity, and the photon threshold is converted to the appropriate intensity threshold accounting for PSF spreading and filter response.

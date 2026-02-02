@@ -82,8 +82,12 @@ Main detection function. Applies DoG filtering, finds local maxima, extracts ROI
 
 `BoxesInfo` with fields:
 - `backend` - Compute backend used (`:gpu` or `:cpu`)
-- `elapsed_ns` - Wall time in nanoseconds
+- `elapsed_s` - Wall time in seconds
 - `device_id` - GPU device ID (0-based), or -1 for CPU
+- `n_rois` - Number of ROIs detected
+- `batch_size` - Frames per batch during processing
+- `n_batches` - Number of batches processed
+- `memory_per_batch` - Estimated memory per batch in bytes
 
 ### `recommend_batch_size(height, width; backend=:auto, memory_fraction=0.8) -> Int`
 
@@ -168,7 +172,7 @@ frames = roi_batch.frame_indices
 
 # Check processing info
 println("Backend: ", info.backend)
-println("Elapsed: ", info.elapsed_ns / 1e6, " ms")
+println("Elapsed: ", info.elapsed_s * 1000, " ms")
 ```
 
 ### sCMOS Variance-Weighted Detection

@@ -129,7 +129,7 @@ println()
     overlap = 3.0,
     use_gpu = false
 )
-t_cpu = info_cpu.elapsed_ns / 1e9
+t_cpu = info_cpu.elapsed_s
 
 println("  Detected $(length(roi_batch)) spots (CPU)")
 println("  Processing time: $(round(t_cpu * 1000, digits=1)) ms")
@@ -144,7 +144,7 @@ if CUDA.functional()
         overlap = 3.0,
         use_gpu = true
     )
-    t_gpu = info_gpu.elapsed_ns / 1e9
+    t_gpu = info_gpu.elapsed_s
 
     println("  Detected $(length(roi_batch_gpu)) spots (GPU, device=$(info_gpu.device_id))")
     println("  Processing time: $(round(t_gpu * 1000, digits=1)) ms")

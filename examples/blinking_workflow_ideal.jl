@@ -147,7 +147,7 @@ println()
     overlap = 3.0,                  # Max 3 pixel overlap
     use_gpu = false                 # Use CPU (set to true if CUDA available)
 )
-t_detect = info.elapsed_ns / 1e9
+t_detect = info.elapsed_s
 
 n_detected = length(roi_batch)
 

@@ -34,7 +34,7 @@ using Test
         # Test BoxesInfo structure
         @test info isa BoxesInfo
         @test info.backend == :cpu
-        @test info.elapsed_ns > 0
+        @test info.elapsed_s > 0
         @test info.device_id == -1  # CPU
 
         # Should detect two peaks
@@ -81,7 +81,7 @@ using Test
 
         # BoxesInfo should be valid
         @test info isa BoxesInfo
-        @test info.elapsed_ns > 0
+        @test info.elapsed_s > 0
     end
 
     @testset "New API with IdealCamera" begin
@@ -129,7 +129,7 @@ using Test
 
         # BoxesInfo should be valid
         @test info isa BoxesInfo
-        @test info.elapsed_ns > 0
+        @test info.elapsed_s > 0
     end
 
     @testset "New API with SCMOSCamera (scalar params)" begin
@@ -170,7 +170,7 @@ using Test
 
         # BoxesInfo should be valid
         @test info isa BoxesInfo
-        @test info.elapsed_ns > 0
+        @test info.elapsed_s > 0
     end
 
     @testset "Rectangular SCMOSCamera with per-pixel calibration" begin
@@ -259,7 +259,7 @@ using Test
 
         # BoxesInfo should be valid
         @test info isa BoxesInfo
-        @test info.elapsed_ns > 0
+        @test info.elapsed_s > 0
 
         # Test with higher threshold - should not detect
         (roi_batch_high, _) = getboxes(image, camera;
@@ -289,7 +289,7 @@ using Test
 
         # BoxesInfo should be valid
         @test info isa BoxesInfo
-        @test info.elapsed_ns > 0
+        @test info.elapsed_s > 0
     end
 
     @testset "sCMOS variance-weighted detection (per-pixel)" begin
@@ -335,7 +335,7 @@ using Test
 
         # BoxesInfo should be valid
         @test info isa BoxesInfo
-        @test info.elapsed_ns > 0
+        @test info.elapsed_s > 0
     end
 
 end

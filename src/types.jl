@@ -5,7 +5,7 @@ Metadata returned alongside ROIBatch from getboxes().
 
 # Fields
 - `backend::Symbol`: Compute backend used (:gpu or :cpu)
-- `elapsed_ns::UInt64`: Wall time in nanoseconds
+- `elapsed_s::Float64`: Wall time in seconds
 - `device_id::Int`: GPU device ID (0-based), or -1 for CPU
 - `n_rois::Int`: Number of ROIs detected
 - `batch_size::Int`: Frames per batch during processing
@@ -14,7 +14,7 @@ Metadata returned alongside ROIBatch from getboxes().
 """
 struct BoxesInfo
     backend::Symbol
-    elapsed_ns::UInt64
+    elapsed_s::Float64
     device_id::Int
     n_rois::Int
     batch_size::Int
@@ -23,7 +23,7 @@ struct BoxesInfo
 end
 
 function Base.show(io::IO, info::BoxesInfo)
-    elapsed_ms = info.elapsed_ns / 1e6
+    elapsed_ms = info.elapsed_s * 1000
     mem_kb = info.memory_per_batch / 1024
     mem_str = mem_kb >= 1024 ? "$(round(mem_kb/1024, digits=1)) MB" : "$(round(mem_kb, digits=1)) KB"
     print(io, "BoxesInfo($(info.n_rois) ROIs, $(round(elapsed_ms, digits=1)) ms, $(info.backend), $(info.n_batches) batches × $(info.batch_size), $(mem_str)/batch)")

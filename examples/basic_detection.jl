@@ -113,7 +113,7 @@ println("  Running on clean image (CPU)...")
     overlap = 3.0,
     use_gpu = false
 )
-t_clean = info_clean.elapsed_ns / 1e9
+t_clean = info_clean.elapsed_s
 
 # Detect on noisy image (CPU)
 println("  Running on noisy image (CPU)...")
@@ -124,7 +124,7 @@ println("  Running on noisy image (CPU)...")
     overlap = 3.0,
     use_gpu = false
 )
-t_noisy = info_noisy.elapsed_ns / 1e9
+t_noisy = info_noisy.elapsed_s
 
 # Try GPU if available
 if CUDA.functional()
@@ -136,7 +136,7 @@ if CUDA.functional()
         overlap = 3.0,
         use_gpu = true
     )
-    t_gpu = info_gpu.elapsed_ns / 1e9
+    t_gpu = info_gpu.elapsed_s
 else
     roi_batch_gpu = nothing
     info_gpu = nothing

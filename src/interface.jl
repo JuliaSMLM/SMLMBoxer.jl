@@ -49,8 +49,12 @@ Tuple of `(ROIBatch, BoxesInfo)`:
 
 `BoxesInfo` with the following fields:
 - `backend`: Compute backend used (:gpu or :cpu)
-- `elapsed_ns`: Wall time in nanoseconds
+- `elapsed_s`: Wall time in seconds
 - `device_id`: GPU device ID (0-based), or -1 for CPU
+- `n_rois`: Number of ROIs detected
+- `batch_size`: Frames per batch during processing
+- `n_batches`: Number of batches processed
+- `memory_per_batch`: Estimated memory per batch in bytes
 
 # Details on filtering
 
@@ -107,7 +111,7 @@ frames = roi_batch.frame_indices
 
 # Check processing info
 println("Backend: ", info.backend)
-println("Elapsed: ", info.elapsed_ns / 1e6, " ms")
+println("Elapsed: ", info.elapsed_s * 1000, " ms")
 
 # Advanced: Direct control over filter parameters
 (roi_batch, info) = getboxes(imagestack;
@@ -304,8 +308,8 @@ function _getboxes_impl(args::GetBoxesArgs)
   end
 
   roi_batch = ROIBatch(boxstack, x_corners, y_corners, frame_indices, camera)
-  elapsed_ns = time_ns() - start_ns
-  info = BoxesInfo(actual_backend, elapsed_ns, device_id, n_rois, batch_size, n_batches, memory_per_batch)
+  elapsed_s = (time_ns() - start_ns) / 1e9
+  info = BoxesInfo(actual_backend, elapsed_s, device_id, n_rois, batch_size, n_batches, memory_per_batch)
 
   return (roi_batch, info)
 end

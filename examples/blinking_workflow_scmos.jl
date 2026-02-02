@@ -167,7 +167,7 @@ println()
     overlap = 3.0,
     use_gpu = false
 )
-t_detect_scmos = info_scmos.elapsed_ns / 1e9
+t_detect_scmos = info_scmos.elapsed_s
 
 n_detected_scmos = length(roi_batch_scmos)
 println("  sCMOS detection complete ($(round(t_detect_scmos * 1000, digits=1)) ms, backend=$(info_scmos.backend))")
@@ -187,7 +187,7 @@ println("Step 6: Detecting with IdealCamera (for comparison)...")
     overlap = 3.0,
     use_gpu = false
 )
-t_detect_ideal = info_ideal.elapsed_ns / 1e9
+t_detect_ideal = info_ideal.elapsed_s
 
 n_detected_ideal = length(roi_batch_ideal)
 println("  IdealCamera detection complete ($(round(t_detect_ideal * 1000, digits=1)) ms)")
