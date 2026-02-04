@@ -4,8 +4,9 @@ Particle/blob detection in SMLM image stacks using difference-of-Gaussians filte
 
 ## Exports
 
-**Total exports:** 5
+**Total exports:** 6
 - `getboxes` - Main detection function
+- `BoxerConfig` - Configuration struct for detection parameters
 - `BoxesInfo` - Metadata struct returned alongside ROIBatch
 - `recommend_batch_size` - Memory-aware batch sizing utility
 - `ROIBatch` - Re-exported from SMLMData.jl
@@ -40,26 +41,81 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 - Memory waiting: Waits for GPU memory availability instead of crashing when busy
 - Backend selection: `:cpu`, `:gpu`, or `:auto` with configurable timeouts
 
+## Configuration
+
+### `BoxerConfig`
+
+Configuration struct for ROI detection parameters. Supports `@kwdef` construction with defaults.
+
+```julia
+@kwdef struct BoxerConfig
+    # PSF-aware interface (recommended)
+    psf_sigma::Union{Float64,Nothing} = nothing  # PSF sigma in microns
+    min_photons::Float64 = 500.0                 # Minimum photons for detection
+
+    # Advanced interface (direct control)
+    sigma_small::Float64 = 1.0    # Small Gaussian sigma in pixels
+    sigma_large::Float64 = 2.0    # Large Gaussian sigma in pixels
+    minval::Float64 = 0.0         # DoG intensity threshold
+
+    # Box parameters
+    boxsize::Int = 7              # ROI size in pixels
+    overlap::Float64 = 2.0        # Max overlap between detections
+
+    # Backend parameters
+    backend::Symbol = :auto       # :cpu, :gpu, or :auto
+    auto_timeout::Float64 = 30.0  # Max wait for GPU in :auto mode
+    gpu_timeout::Float64 = Inf    # Max wait in :gpu mode
+end
+```
+
+**Usage:**
+```julia
+# PSF-aware (recommended)
+config = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+
+# Advanced (direct control)
+config = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=10.0)
+
+# GPU-specific
+config = BoxerConfig(psf_sigma=0.13, backend=:gpu, gpu_timeout=60.0)
+```
+
 ## Core Function
 
-### `getboxes(imagestack, camera=nothing; kwargs...) -> (ROIBatch, BoxesInfo)`
+### `getboxes` - Two Calling Conventions
+
+**Config-based (recommended for reusable settings):**
+```julia
+getboxes(imagestack, camera, config::BoxerConfig; on_wait=nothing) -> (ROIBatch, BoxesInfo)
+```
+
+**Kwargs-based (convenient for one-off calls):**
+```julia
+getboxes(imagestack, camera=nothing; kwargs...) -> (ROIBatch, BoxesInfo)
+```
+
+Both conventions are equivalent - kwargs are forwarded to a BoxerConfig internally.
 
 Main detection function. Applies DoG filtering, finds local maxima, extracts ROI patches.
 
 **Arguments:**
 - `imagestack::AbstractArray{<:Real}` - Input image stack (2D or 3D)
 - `camera::Union{AbstractCamera,Nothing}` - Camera object (IdealCamera or SCMOSCamera)
+- `config::BoxerConfig` - Configuration struct (config-based convention)
 
-**Primary Interface (PSF-Aware, Recommended):**
+**Kwargs (kwargs-based convention):**
+
+*PSF-Aware Interface (Recommended):*
 - `psf_sigma::Real` - PSF sigma in microns (requires camera for pixel size conversion)
 - `min_photons::Real` - Minimum total photons for detection (default: 500.0)
 
-**Advanced Interface (Direct Control):**
+*Advanced Interface (Direct Control):*
 - `sigma_small::Real` - Small Gaussian sigma in pixels (default: 1.0)
 - `sigma_large::Real` - Large Gaussian sigma in pixels (default: 2.0)
 - `minval::Real` - DoG intensity threshold (default: 0.0)
 
-**Other Parameters:**
+*Other Parameters:*
 - `boxsize::Int` - ROI size in pixels (default: 7)
 - `overlap::Real` - Maximum overlap between detections in pixels (default: 2.0)
 - `backend::Symbol` - Compute backend: `:cpu`, `:gpu`, or `:auto` (default: `:auto`)
@@ -157,7 +213,11 @@ using SMLMBoxer, SMLMData
 # Create camera with physical pixel size (100nm pixels)
 camera = IdealCamera(1:256, 1:256, 0.1f0)
 
-# Detect particles with PSF-aware thresholding
+# Config-based (recommended for reusable settings)
+config = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+(roi_batch, info) = getboxes(imagestack, camera, config)
+
+# OR kwargs-based (convenient for one-off calls)
 (roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,        # 130nm PSF in microns
     min_photons = 500.0,     # Minimum 500 photons
@@ -193,6 +253,12 @@ camera = SCMOSCamera(256, 256, 0.1f0, readnoise_map)
 ### Advanced: Direct Parameter Control
 ```julia
 # Expert mode: bypass PSF-aware interface
+
+# Config-based
+config = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=10.0, boxsize=9, overlap=1.5)
+(roi_batch, info) = getboxes(imagestack, nothing, config)
+
+# OR kwargs-based
 (roi_batch, info) = getboxes(imagestack;
     sigma_small = 1.5,   # Custom filter sigma (pixels)
     sigma_large = 3.0,

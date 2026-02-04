@@ -24,7 +24,48 @@ Pkg.add(url="https://github.com/JuliaSMLM/SMLMBoxer.jl")
 ## Usage
 The main function provided by the package is `getboxes()`, which detects particles or blobs in a multidimensional image stack and returns an `ROIBatch` containing detected regions centered around local maxima. The function uses a Difference of Gaussians (DoG) filter optimized for blob detection and is capable of GPU acceleration.
 
-### Example (Recommended - PSF-Aware Detection)
+### Two Calling Conventions
+
+**Config-based (recommended for reusable settings):**
+```julia
+using SMLMBoxer, SMLMData
+
+camera = IdealCamera(1:256, 1:256, 0.1f0)
+config = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+
+(roi_batch, info) = getboxes(imagestack, camera, config)
+```
+
+**Kwargs-based (convenient for one-off calls):**
+```julia
+(roi_batch, info) = getboxes(imagestack, camera;
+    psf_sigma = 0.13,
+    min_photons = 500.0,
+    boxsize = 11)
+```
+
+Both conventions are equivalent - kwargs are forwarded to a BoxerConfig internally.
+
+### BoxerConfig
+
+Configuration struct for ROI detection. Create with `@kwdef` defaults:
+
+```julia
+config = BoxerConfig(
+    # PSF-aware interface (recommended)
+    psf_sigma = 0.13,       # PSF sigma in microns (requires camera)
+    min_photons = 500.0,    # Minimum photons for detection
+
+    # Box parameters
+    boxsize = 11,           # ROI size in pixels
+    overlap = 2.0,          # Max overlap between detections
+
+    # Backend
+    backend = :auto         # :cpu, :gpu, or :auto
+)
+```
+
+### Example (PSF-Aware Detection)
 ```julia
 using SMLMBoxer, SMLMData
 
