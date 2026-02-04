@@ -24,7 +24,7 @@ using Statistics: mean  # For mean gain/QE in threshold calculation
 
 # Re-export ROIBatch and SingleROI from SMLMData for convenience
 using SMLMData: ROIBatch, SingleROI
-export getboxes, ROIBatch, SingleROI, BoxesInfo, recommend_batch_size
+export getboxes, ROIBatch, SingleROI, BoxerConfig, BoxesInfo, recommend_batch_size
 
 include("gpu.jl")
 include("types.jl")

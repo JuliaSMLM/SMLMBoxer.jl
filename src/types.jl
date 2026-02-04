@@ -1,4 +1,73 @@
 """
+    BoxerConfig
+
+Configuration for ROI detection via getboxes().
+
+Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
+(sigma_small + sigma_large + minval). PSF-aware is recommended.
+
+# Fields
+
+## PSF-Aware Interface (Recommended)
+- `psf_sigma::Union{Float64,Nothing}`: PSF sigma in microns (e.g., 0.13 for 130nm PSF).
+  Requires camera for pixel conversion. When set, overrides sigma_small/sigma_large/minval.
+- `min_photons::Float64`: Minimum photons for detection (default: 500.0)
+
+## Advanced Interface (Direct Control)
+- `sigma_small::Float64`: Small Gaussian sigma in pixels (default: 1.0)
+- `sigma_large::Float64`: Large Gaussian sigma in pixels (default: 2.0)
+- `minval::Float64`: DoG intensity threshold (default: 0.0)
+
+## Box Parameters
+- `boxsize::Int`: ROI box size in pixels (default: 7)
+- `overlap::Float64`: Max overlap between detections in pixels (default: 2.0)
+
+## Backend Parameters
+- `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
+- `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback (default: 30.0)
+- `gpu_timeout::Float64`: Max wait for GPU in :gpu mode (default: Inf)
+
+# Examples
+```julia
+# PSF-aware (recommended)
+config = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+
+# Advanced (direct control)
+config = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=10.0)
+
+# GPU-specific
+config = BoxerConfig(psf_sigma=0.13, backend=:gpu, gpu_timeout=60.0)
+```
+"""
+Base.@kwdef struct BoxerConfig
+    # PSF-aware interface
+    psf_sigma::Union{Float64,Nothing} = nothing
+    min_photons::Float64 = 500.0
+
+    # Advanced interface (direct control)
+    sigma_small::Float64 = 1.0
+    sigma_large::Float64 = 2.0
+    minval::Float64 = 0.0
+
+    # Box parameters
+    boxsize::Int = 7
+    overlap::Float64 = 2.0
+
+    # Backend parameters
+    backend::Symbol = :auto
+    auto_timeout::Float64 = 30.0
+    gpu_timeout::Float64 = Inf
+end
+
+function Base.show(io::IO, config::BoxerConfig)
+    if config.psf_sigma !== nothing
+        print(io, "BoxerConfig(psf_sigma=$(config.psf_sigma), min_photons=$(config.min_photons), boxsize=$(config.boxsize), backend=$(config.backend))")
+    else
+        print(io, "BoxerConfig(σ_small=$(config.sigma_small), σ_large=$(config.sigma_large), minval=$(config.minval), boxsize=$(config.boxsize), backend=$(config.backend))")
+    end
+end
+
+"""
     BoxesInfo
 
 Metadata returned alongside ROIBatch from getboxes().

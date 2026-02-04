@@ -126,13 +126,66 @@ for roi in roi_batch
 end
 ```
 """
-function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}=nothing; kwargs...)
+# Config-based calling convention (primary)
+function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}, config::BoxerConfig;
+                  on_wait::Union{Function,Nothing}=nothing)
   # Convert to Float32 for type stability throughout pipeline
   imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
 
-  # Create args with camera
-  args = GetBoxesArgs(; imagestack=imagestack_f32, camera=camera, kwargs...)
+  # Create args from config
+  args = GetBoxesArgs(;
+      imagestack=imagestack_f32,
+      camera=camera,
+      boxsize=config.boxsize,
+      overlap=config.overlap,
+      psf_sigma=config.psf_sigma,
+      min_photons=config.min_photons,
+      sigma_small=config.psf_sigma === nothing ? config.sigma_small : nothing,
+      sigma_large=config.psf_sigma === nothing ? config.sigma_large : nothing,
+      minval=config.psf_sigma === nothing ? config.minval : nothing,
+      backend=config.backend,
+      auto_timeout=config.auto_timeout,
+      gpu_timeout=config.gpu_timeout,
+      on_wait=on_wait
+  )
   return _getboxes_impl(args)
+end
+
+# Kwargs calling convention (forwards to Config form)
+function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}=nothing;
+                  psf_sigma::Union{Real,Nothing}=nothing,
+                  min_photons::Real=500.0,
+                  sigma_small::Union{Real,Nothing}=nothing,
+                  sigma_large::Union{Real,Nothing}=nothing,
+                  minval::Union{Real,Nothing}=nothing,
+                  boxsize::Int=7,
+                  overlap::Real=2.0,
+                  backend::Symbol=:auto,
+                  auto_timeout::Real=30.0,
+                  gpu_timeout::Real=Inf,
+                  on_wait::Union{Function,Nothing}=nothing,
+                  use_gpu::Union{Bool,Nothing}=nothing)  # Deprecated
+  # Handle deprecated use_gpu
+  actual_backend = backend
+  if use_gpu !== nothing
+      actual_backend = use_gpu ? :auto : :cpu
+  end
+
+  # Build config from kwargs
+  config = BoxerConfig(
+      psf_sigma=psf_sigma === nothing ? nothing : Float64(psf_sigma),
+      min_photons=Float64(min_photons),
+      sigma_small=Float64(sigma_small === nothing ? 1.0 : sigma_small),
+      sigma_large=Float64(sigma_large === nothing ? 2.0 : sigma_large),
+      minval=Float64(minval === nothing ? 0.0 : minval),
+      boxsize=boxsize,
+      overlap=Float64(overlap),
+      backend=actual_backend,
+      auto_timeout=Float64(auto_timeout),
+      gpu_timeout=Float64(gpu_timeout)
+  )
+
+  return getboxes(imagestack, camera, config; on_wait=on_wait)
 end
 
 """

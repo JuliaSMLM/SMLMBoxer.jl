@@ -292,6 +292,41 @@ using Test
         @test info.elapsed_s > 0
     end
 
+    @testset "BoxerConfig calling convention" begin
+        # Test config-based calling
+        image = zeros(Float32, 100, 100)
+        image[50, 50] = 1000.0
+
+        camera = IdealCamera(1:101, 1:101, 0.1f0)
+
+        # PSF-aware config
+        config_psf = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+        @test config_psf isa BoxerConfig
+        @test config_psf.psf_sigma == 0.13
+        @test config_psf.boxsize == 11
+
+        (roi_batch, info) = getboxes(image, camera, config_psf)
+        @test length(roi_batch) >= 1
+        @test info isa BoxesInfo
+
+        # Advanced config (sigma_small/sigma_large)
+        config_adv = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=0.1, boxsize=7, backend=:cpu)
+        @test config_adv.psf_sigma === nothing
+        @test config_adv.sigma_small == 1.5
+        @test config_adv.backend == :cpu
+
+        image2 = zeros(Float32, 100, 100)
+        image2[20, 50] = 10
+
+        (roi_batch2, info2) = getboxes(image2, nothing, config_adv)
+        @test info2.backend == :cpu
+
+        # Kwargs should produce same result as config
+        (roi_batch3, info3) = getboxes(image2;
+            sigma_small=1.5, sigma_large=3.0, minval=0.1, boxsize=7, backend=:cpu)
+        @test length(roi_batch2) == length(roi_batch3)
+    end
+
     @testset "sCMOS variance-weighted detection (per-pixel)" begin
         # Create image with two spots of equal intensity
         image = zeros(Float32, 100, 100)
