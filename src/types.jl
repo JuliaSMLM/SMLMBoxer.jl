@@ -39,7 +39,7 @@ config = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=10.0)
 config = BoxerConfig(psf_sigma=0.13, backend=:gpu, gpu_timeout=60.0)
 ```
 """
-Base.@kwdef struct BoxerConfig
+Base.@kwdef struct BoxerConfig <: AbstractSMLMConfig
     # PSF-aware interface
     psf_sigma::Union{Float64,Nothing} = nothing
     min_photons::Float64 = 500.0
@@ -81,7 +81,7 @@ Metadata returned alongside ROIBatch from getboxes().
 - `n_batches::Int`: Number of batches processed
 - `memory_per_batch::Int`: Estimated memory per batch in bytes
 """
-struct BoxesInfo
+struct BoxesInfo <: AbstractSMLMInfo
     backend::Symbol
     elapsed_s::Float64
     device_id::Int
