@@ -20,7 +20,7 @@ using Test
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.1,
-            use_gpu=false
+            backend=:cpu
         )
 
         # Test ROIBatch structure
@@ -66,7 +66,7 @@ using Test
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.1,
-            use_gpu=false
+            backend=:cpu
         )
 
         # Should detect only one peak (overlap removed)
@@ -105,7 +105,7 @@ using Test
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.1,
-            use_gpu=false
+            backend=:cpu
         )
 
         # Should detect two peaks
@@ -155,7 +155,7 @@ using Test
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.1,
-            use_gpu=false
+            backend=:cpu
         )
 
         # Should detect the peak
@@ -245,7 +245,7 @@ using Test
             psf_sigma = psf_sigma_microns,  # In microns (auto-converts to pixels)
             min_photons = 500.0,             # Should detect our 1000 photon peak
             boxsize = 11,
-            use_gpu = false
+            backend = :cpu
         )
 
         # Should detect the peak
@@ -266,7 +266,7 @@ using Test
             psf_sigma = psf_sigma_microns,
             min_photons = 5000.0,  # Way above our peak
             boxsize = 11,
-            use_gpu = false
+            backend = :cpu
         )
         @test length(roi_batch_high) == 0
     end
@@ -281,7 +281,7 @@ using Test
             sigma_small = 1.0,
             sigma_large = 2.0,
             minval = 0.1,
-            use_gpu = false
+            backend = :cpu
         )
 
         @test length(roi_batch) >= 1
@@ -355,7 +355,7 @@ using Test
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.5,  # Threshold to potentially reject noisy spot
-            use_gpu=false
+            backend=:cpu
         )
 
         # With variance weighting, the low-noise spot should be detected

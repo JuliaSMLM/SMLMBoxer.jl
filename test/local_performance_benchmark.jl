@@ -73,11 +73,11 @@ function create_synthetic_image(nx, ny, nframes, nspots_per_frame; sigma=2.0, in
 end
 
 """
-    benchmark_getboxes(image, camera; use_gpu=false, nwarmup=2, nruns=5)
+    benchmark_getboxes(image, camera; backend=:cpu, nwarmup=2, nruns=5)
 
 Benchmark getboxes with warmup and multiple runs.
 """
-function benchmark_getboxes(image, camera; use_gpu=false, nwarmup=WARMUP_ITERATIONS, nruns=BENCHMARK_RUNS)
+function benchmark_getboxes(image, camera; backend::Symbol=:cpu, nwarmup=WARMUP_ITERATIONS, nruns=BENCHMARK_RUNS)
     # Warmup
     for _ in 1:nwarmup
         (result, _) = getboxes(image, camera;
@@ -86,7 +86,7 @@ function benchmark_getboxes(image, camera; use_gpu=false, nwarmup=WARMUP_ITERATI
             sigma_small=1.0,
             sigma_large=2.0,
             minval=5.0,
-            use_gpu=use_gpu
+            backend=backend
         )
     end
 
@@ -96,7 +96,7 @@ function benchmark_getboxes(image, camera; use_gpu=false, nwarmup=WARMUP_ITERATI
 
     for _ in 1:nruns
         GC.gc()  # Force garbage collection
-        if CUDA.functional() && use_gpu
+        if CUDA.functional() && backend != :cpu
             CUDA.reclaim()  # Reclaim GPU memory
         end
 
@@ -107,7 +107,7 @@ function benchmark_getboxes(image, camera; use_gpu=false, nwarmup=WARMUP_ITERATI
             sigma_small=1.0,
             sigma_large=2.0,
             minval=5.0,
-            use_gpu=use_gpu
+            backend=backend
         )
         t1 = time()
 
@@ -145,12 +145,12 @@ function run_single_benchmark(config::BenchmarkConfig, has_cuda::Bool)
     end
 
     # CPU benchmark
-    cpu_time, cpu_found = benchmark_getboxes(image, camera; use_gpu=false)
+    cpu_time, cpu_found = benchmark_getboxes(image, camera; backend=:cpu)
     cpu_throughput = config.nframes / cpu_time
 
     # GPU benchmark
     if has_cuda
-        gpu_time, gpu_found = benchmark_getboxes(image, camera; use_gpu=true)
+        gpu_time, gpu_found = benchmark_getboxes(image, camera; backend=:auto)
         gpu_throughput = config.nframes / gpu_time
         speedup = cpu_time / gpu_time
     else

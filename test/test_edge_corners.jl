@@ -45,7 +45,7 @@ roi_batch = getboxes(image, camera;
     minval = 10.0,
     boxsize = boxsize,
     overlap = 0.5,  # Tight to avoid merging
-    use_gpu = false
+    backend = :cpu
 )
 
 println("Detected $(length(roi_batch)) peaks (expected $(length(test_peaks)))")

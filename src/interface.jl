@@ -34,7 +34,6 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 - `auto_timeout::Real`: Max seconds to wait for GPU memory in `:auto` mode (default: 30.0).
 - `gpu_timeout::Real`: Max seconds to wait for GPU memory in `:gpu` mode (default: Inf).
 - `on_wait::Function`: Optional callback `(elapsed, available, required) -> nothing` for wait progress.
-- `use_gpu::Bool`: DEPRECATED - use `backend` instead. If provided, `true` maps to `:auto`, `false` to `:cpu`.
 
 # Returns
 Tuple of `(ROIBatch, BoxesInfo)`:
@@ -82,13 +81,13 @@ where variance = readnoise². This implements optimal inverse variance weighting
 This significantly improves detection sensitivity in sCMOS data with spatially-varying noise.
 
 **GPU Acceleration:** Variance-weighted filtering uses KernelAbstractions.jl for device-agnostic
-computation. The same kernel code runs on both CPU and GPU, automatically selected based on `use_gpu`.
+computation. The same kernel code runs on both CPU and GPU, automatically selected based on `backend`.
 This provides GPU acceleration for sCMOS cameras (10-100x speedup on large images).
 
 ## Standard Filtering (IdealCamera or no camera)
 
 Standard DoG convolution is used when no camera is provided or with IdealCamera.
-The convolution is performed via NNlib (using cuDNN on GPU) or CPU, depending on `use_gpu`.
+The convolution is performed via NNlib (using cuDNN on GPU) or CPU, depending on `backend`.
 
 After filtering, local maxima above `minval` are identified. Boxes are cut
 out around each maximum, excluding overlaps.
@@ -127,8 +126,7 @@ end
 ```
 """
 # Config-based calling convention (primary)
-function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}, config::BoxerConfig;
-                  on_wait::Union{Function,Nothing}=nothing)
+function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}, config::BoxerConfig)
   # Convert to Float32 for type stability throughout pipeline
   imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
 
@@ -146,7 +144,7 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
       backend=config.backend,
       auto_timeout=config.auto_timeout,
       gpu_timeout=config.gpu_timeout,
-      on_wait=on_wait
+      on_wait=config.on_wait
   )
   return _getboxes_impl(args)
 end
@@ -163,14 +161,7 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
                   backend::Symbol=:auto,
                   auto_timeout::Real=30.0,
                   gpu_timeout::Real=Inf,
-                  on_wait::Union{Function,Nothing}=nothing,
-                  use_gpu::Union{Bool,Nothing}=nothing)  # Deprecated
-  # Handle deprecated use_gpu
-  actual_backend = backend
-  if use_gpu !== nothing
-      actual_backend = use_gpu ? :auto : :cpu
-  end
-
+                  on_wait::Union{Function,Nothing}=nothing)
   # Build config from kwargs
   config = BoxerConfig(
       psf_sigma=psf_sigma === nothing ? nothing : Float64(psf_sigma),
@@ -180,12 +171,13 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
       minval=Float64(minval === nothing ? 0.0 : minval),
       boxsize=boxsize,
       overlap=Float64(overlap),
-      backend=actual_backend,
+      backend=backend,
       auto_timeout=Float64(auto_timeout),
-      gpu_timeout=Float64(gpu_timeout)
+      gpu_timeout=Float64(gpu_timeout),
+      on_wait=on_wait
   )
 
-  return getboxes(imagestack, camera, config; on_wait=on_wait)
+  return getboxes(imagestack, camera, config)
 end
 
 """

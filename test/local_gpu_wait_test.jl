@@ -113,13 +113,14 @@ function run_gpu_wait_tests()
         println("\n[5/6] Skipping backend=:gpu test (no CUDA)")
     end
 
-    # Test 6: Backwards compatibility with use_gpu kwarg
-    println("\n[6/6] Testing backwards compatibility (use_gpu=false)...")
+    # Test 6: Explicit backend=:cpu
+    println("\n[6/6] Testing explicit backend=:cpu...")
     try
         (result, info) = getboxes(img, camera;
-            use_gpu=false,
+            backend=:cpu,
             sigma_small=1.5, sigma_large=3.0, minval=0.1)
-        println("      Passed: $(length(result)) ROIs detected (use_gpu=false -> backend=$(info.backend))")
+        @assert info.backend == :cpu "Expected :cpu backend"
+        println("      Passed: $(length(result)) ROIs detected (backend=$(info.backend))")
     catch e
         println("      FAILED: $e")
         all_passed = false

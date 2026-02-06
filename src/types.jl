@@ -26,6 +26,7 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
 - `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback (default: 30.0)
 - `gpu_timeout::Float64`: Max wait for GPU in :gpu mode (default: Inf)
+- `on_wait::Union{Function,Nothing}`: Optional callback `(elapsed, available, required) -> nothing` for GPU wait progress (default: nothing)
 
 # Examples
 ```julia
@@ -57,6 +58,7 @@ Base.@kwdef struct BoxerConfig <: AbstractSMLMConfig
     backend::Symbol = :auto
     auto_timeout::Float64 = 30.0
     gpu_timeout::Float64 = Inf
+    on_wait::Union{Function,Nothing} = nothing
 end
 
 function Base.show(io::IO, config::BoxerConfig)
@@ -220,7 +222,6 @@ When psf_sigma is provided:
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
 - `boxsize::Int`: ROI box size in pixels (default: 7)
 - `overlap::Real`: Maximum overlap between detections in pixels (default: 2.0)
-- `use_gpu::Bool`: Use GPU acceleration (default: true) - DEPRECATED, use backend instead
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
 - `auto_timeout::Real`: Max wait seconds for :auto mode before CPU fallback (default: 30.0)
 - `gpu_timeout::Real`: Max wait seconds for :gpu mode (default: Inf)
@@ -251,7 +252,6 @@ mutable struct GetBoxesArgs
         sigma_small::Union{Real,Nothing} = nothing,
         sigma_large::Union{Real,Nothing} = nothing,
         minval::Union{Real,Nothing} = nothing,
-        use_gpu::Union{Bool,Nothing} = nothing,
         backend::Symbol = :auto,
         auto_timeout::Real = 30.0,
         gpu_timeout::Real = Inf,
@@ -259,7 +259,7 @@ mutable struct GetBoxesArgs
     )
         # Determine which interface is being used
         if psf_sigma !== nothing
-            # NEW INTERFACE: PSF-aware detection (recommended)
+            # PSF-aware detection (recommended)
             # psf_sigma is in physical units (microns) - convert to pixels
             if camera !== nothing
                 pixel_size_μm = get_pixel_size(camera)
@@ -274,27 +274,20 @@ mutable struct GetBoxesArgs
             effective_gain = get_effective_gain(camera)
             min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels; effective_gain=effective_gain)
         else
-            # OLD INTERFACE: Direct control (backward compatible)
+            # Direct control interface
             σ_small = Float32(sigma_small !== nothing ? sigma_small : 1.0)
             σ_large = Float32(sigma_large !== nothing ? sigma_large : 2.0)
             min_val = Float32(minval !== nothing ? minval : 0.0)
         end
 
-        # Handle backwards compatibility: use_gpu overrides backend if explicitly set
-        actual_backend = backend
-        if use_gpu !== nothing
-            actual_backend = use_gpu ? :auto : :cpu
-        end
-
         # Validate backend
-        actual_backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
+        backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
         # use_gpu is determined later in _getboxes_impl based on backend and memory availability
-        # For now, set it based on backend intent (will be refined during processing)
-        initial_use_gpu = actual_backend != :cpu
+        initial_use_gpu = backend != :cpu
 
         new(imagestack, camera, boxsize, Float32(overlap), σ_small, σ_large, min_val,
-            initial_use_gpu, actual_backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait)
+            initial_use_gpu, backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait)
     end
 end
 
@@ -418,7 +411,6 @@ running out of memory.
 - `width::Int`: Image width in pixels
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
 - `memory_fraction::Real`: Fraction of free memory to use (default: 0.8)
-- `use_gpu::Bool`: DEPRECATED - use backend instead
 
 # Returns
 - Maximum recommended number of frames to load at once
@@ -451,21 +443,14 @@ end
 """
 function recommend_batch_size(height::Int, width::Int;
         backend::Symbol=:auto,
-        use_gpu::Union{Bool,Nothing}=nothing,
         memory_fraction::Real=0.8)
     # Memory multiplier: accounts for all processing stages
     # Matches n_copies in _getboxes_impl for consistency
     n_copies = 6
     bytes_per_frame = height * width * sizeof(Float32) * n_copies
 
-    # Handle backwards compatibility
-    actual_backend = backend
-    if use_gpu !== nothing
-        actual_backend = use_gpu ? :auto : :cpu
-    end
-
     # Determine if GPU should be used
-    use_gpu_actual = actual_backend != :cpu && has_cuda() && CUDA.functional()
+    use_gpu_actual = backend != :cpu && has_cuda() && CUDA.functional()
 
     if use_gpu_actual
         # GPU: find device with most free memory via NVML (no context switch needed)
