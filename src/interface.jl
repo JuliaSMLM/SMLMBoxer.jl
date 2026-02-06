@@ -273,60 +273,45 @@ function _getboxes_impl(args::GetBoxesArgs)
   nrows, ncols = size(imagestack, 1), size(imagestack, 2)
   min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera)
 
-  actual_backend = select_backend(args.backend, min_memory_needed;
+  # select_backend handles NVML polling + device selection (Layer 1)
+  actual_backend, device_id = select_backend(args.backend, min_memory_needed;
       auto_timeout = args.auto_timeout,
       gpu_timeout = args.gpu_timeout,
       on_wait = args.on_wait)
 
   args.use_gpu = (actual_backend == :gpu)
 
-  # Track device and batch info for BoxesInfo
-  device_id = -1  # CPU default
+  # Track batch info for BoxesInfo
   batch_size = 0
   n_batches = 0
   memory_per_batch = 0
 
   if args.use_gpu
-      # GPU path - wrap in fallback for :auto mode
-      gpu_failed = false
+      # GPU path - Layer 2: runtime try/catch for :auto mode
       if args.backend == :auto
           try
-              find_best_gpu()
-              device_id = Int(CUDA.device().handle)
               max_free_mem = CUDA.free_memory()
-
               coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
                   imagestack, args, kernelsize, max_free_mem; use_gpu=true)
-
               CUDA.synchronize()
           catch e
               @warn "GPU processing failed, falling back to CPU" exception=e
-              gpu_failed = true
               device_id = -1
               actual_backend = :cpu
               args.use_gpu = false
           end
       else
           # :gpu mode - no fallback, let errors propagate
-          find_best_gpu()
-          device_id = Int(CUDA.device().handle)
           max_free_mem = CUDA.free_memory()
-
           coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
               imagestack, args, kernelsize, max_free_mem; use_gpu=true)
-
           CUDA.synchronize()
-      end
-
-      if gpu_failed
-          # Fall through to CPU path
       end
   end
 
   if !args.use_gpu
       # CPU path with GC cleanup between batches
       max_free_mem = Sys.free_memory()
-
       coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
           imagestack, args, kernelsize, max_free_mem;
           use_gpu=false,
