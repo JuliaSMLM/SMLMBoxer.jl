@@ -22,7 +22,10 @@ has_cuda() = CUDA.functional()
 Find the GPU with the most free memory and switch to it.
 
 Returns the device index (0-based). On single-GPU systems, returns 0 immediately.
-Logs selection info when multiple GPUs are available.
+
+Uses NVML to query free memory on each device without creating CUDA contexts,
+avoiding `cuDevicePrimaryCtxRetain` OOM errors under multi-process contention.
+Only calls `CUDA.device!()` once on the selected device.
 
 # Example
 ```julia
@@ -35,14 +38,15 @@ function find_best_gpu()
     n = length(CUDA.devices())
     n == 1 && return 0
 
+    # Query memory via NVML (no CUDA context needed, safe under contention)
     best, maxfree = 0, 0
     for i in 0:(n-1)
-        CUDA.device!(i)
-        free = CUDA.free_memory()
-        if free > maxfree
-            maxfree, best = free, i
+        info = CUDA.NVML.memory_info(CUDA.NVML.Device(i))
+        if info.free > maxfree
+            maxfree, best = info.free, i
         end
     end
+
     CUDA.device!(best)
     @info "Selected GPU $best with $(Base.format_bytes(maxfree)) free"
     return best

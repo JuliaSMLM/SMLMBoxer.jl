@@ -468,12 +468,11 @@ function recommend_batch_size(height::Int, width::Int;
     use_gpu_actual = actual_backend != :cpu && has_cuda() && CUDA.functional()
 
     if use_gpu_actual
-        # GPU: find device with most free memory
+        # GPU: find device with most free memory via NVML (no context switch needed)
         max_free_mem = 0
         for i in 0:length(CUDA.devices())-1
-            CUDA.device!(i)
-            free_mem = CUDA.free_memory()
-            max_free_mem = max(max_free_mem, free_mem)
+            info = CUDA.NVML.memory_info(CUDA.NVML.Device(i))
+            max_free_mem = max(max_free_mem, info.free)
         end
         available = max_free_mem * memory_fraction
     else
