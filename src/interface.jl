@@ -287,16 +287,43 @@ function _getboxes_impl(args::GetBoxesArgs)
   memory_per_batch = 0
 
   if args.use_gpu
-      # GPU path
-      find_best_gpu()
-      device_id = Int(CUDA.device().handle)
-      max_free_mem = CUDA.free_memory()
+      # GPU path - wrap in fallback for :auto mode
+      gpu_failed = false
+      if args.backend == :auto
+          try
+              find_best_gpu()
+              device_id = Int(CUDA.device().handle)
+              max_free_mem = CUDA.free_memory()
 
-      coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
-          imagestack, args, kernelsize, max_free_mem; use_gpu=true)
+              coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
+                  imagestack, args, kernelsize, max_free_mem; use_gpu=true)
 
-      CUDA.synchronize()
-  else
+              CUDA.synchronize()
+          catch e
+              @warn "GPU processing failed, falling back to CPU" exception=e
+              gpu_failed = true
+              device_id = -1
+              actual_backend = :cpu
+              args.use_gpu = false
+          end
+      else
+          # :gpu mode - no fallback, let errors propagate
+          find_best_gpu()
+          device_id = Int(CUDA.device().handle)
+          max_free_mem = CUDA.free_memory()
+
+          coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
+              imagestack, args, kernelsize, max_free_mem; use_gpu=true)
+
+          CUDA.synchronize()
+      end
+
+      if gpu_failed
+          # Fall through to CPU path
+      end
+  end
+
+  if !args.use_gpu
       # CPU path with GC cleanup between batches
       max_free_mem = Sys.free_memory()
 
