@@ -260,76 +260,63 @@ function _getboxes_impl(args::GetBoxesArgs)
   kernelsize = Int(floor(args.boxsize - args.overlap))
   kernelsize = max(minkernelsize, kernelsize)
 
-  # Determine backend with memory waiting
   # Estimate memory needed for at least 1 frame (minimum batch)
   nrows, ncols = size(imagestack, 1), size(imagestack, 2)
   min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera)
 
-  # select_backend handles NVML polling + device selection (Layer 1)
-  gpu_start = time()
-  actual_backend, device_id = select_backend(args.backend, min_memory_needed;
-      auto_timeout = args.auto_timeout,
-      gpu_timeout = args.gpu_timeout,
-      on_wait = args.on_wait)
-
-  args.use_gpu = (actual_backend == :gpu)
-
-  # Track batch info for BoxesInfo
+  # Track results
+  actual_backend = :cpu
+  device_id = -1
   batch_size = 0
   n_batches = 0
   memory_per_batch = 0
+  gpu_succeeded = false
 
-  if args.use_gpu
-      # GPU path - Layer 2: runtime try/catch for :auto mode
-      if args.backend == :auto
-          gpu_succeeded = false
-          while !gpu_succeeded
-              try
-                  max_free_mem = CUDA.free_memory()
-                  coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
-                      imagestack, args, kernelsize, max_free_mem; use_gpu=true)
-                  CUDA.synchronize()
-                  gpu_succeeded = true
-              catch e
-                  @warn "GPU processing failed, releasing memory and retrying" exception=e
-                  GC.gc(false)
-                  CUDA.reclaim()
+  if args.backend != :cpu && has_cuda()
+      # GPU path: unified retry loop for :auto and :gpu
+      # Handles all failure modes: no free memory, TOCTOU context race, runtime OOM
+      timeout = args.backend == :auto ? args.auto_timeout : args.gpu_timeout
+      deadline = time() + timeout
 
-                  remaining = args.auto_timeout - (time() - gpu_start)
-                  if remaining <= 0
-                      @warn "GPU retry timeout expired, falling back to CPU"
-                      device_id = -1
-                      actual_backend = :cpu
-                      args.use_gpu = false
-                      break
-                  end
+      while !gpu_succeeded && time() < deadline
+          remaining = max(0.0, deadline - time())
 
-                  # Re-poll NVML with remaining timeout budget
-                  available, new_device_id = poll_gpu_nvml(min_memory_needed;
-                      timeout=remaining, on_wait=args.on_wait)
-                  if available
-                      CUDA.device!(new_device_id)
-                      device_id = new_device_id
-                  else
-                      @warn "No GPU available after retry, falling back to CPU"
-                      device_id = -1
-                      actual_backend = :cpu
-                      args.use_gpu = false
-                      break
-                  end
-              end
+          # Poll NVML for available GPU
+          available, dev_id = poll_gpu_nvml(min_memory_needed;
+              timeout=remaining, on_wait=args.on_wait)
+          !available && break
+
+          try
+              CUDA.device!(dev_id)
+              max_free_mem = CUDA.free_memory()
+              coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
+                  imagestack, args, kernelsize, max_free_mem; use_gpu=true)
+              CUDA.synchronize()
+              device_id = dev_id
+              actual_backend = :gpu
+              gpu_succeeded = true
+          catch e
+              @warn "GPU failed, releasing memory and retrying" exception=e
+              GC.gc(false)
+              CUDA.reclaim()
+              # loop back to poll_gpu_nvml
           end
-      else
-          # :gpu mode - no fallback, let errors propagate
-          max_free_mem = CUDA.free_memory()
-          coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
-              imagestack, args, kernelsize, max_free_mem; use_gpu=true)
-          CUDA.synchronize()
       end
+
+      if !gpu_succeeded
+          if args.backend == :gpu
+              error("GPU processing failed after $(timeout)s. " *
+                    "Required: $(Base.format_bytes(min_memory_needed))")
+          else
+              @warn "GPU unavailable after $(timeout)s, using CPU"
+          end
+      end
+  elseif args.backend == :gpu
+      error("GPU backend requested but CUDA is not functional")
   end
 
-  if !args.use_gpu
-      # CPU path with GC cleanup between batches
+  if !gpu_succeeded
+      # CPU path
       max_free_mem = Sys.free_memory()
       coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
           imagestack, args, kernelsize, max_free_mem;
