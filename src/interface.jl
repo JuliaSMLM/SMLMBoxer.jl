@@ -266,6 +266,7 @@ function _getboxes_impl(args::GetBoxesArgs)
   min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera)
 
   # select_backend handles NVML polling + device selection (Layer 1)
+  gpu_start = time()
   actual_backend, device_id = select_backend(args.backend, min_memory_needed;
       auto_timeout = args.auto_timeout,
       gpu_timeout = args.gpu_timeout,
@@ -281,18 +282,42 @@ function _getboxes_impl(args::GetBoxesArgs)
   if args.use_gpu
       # GPU path - Layer 2: runtime try/catch for :auto mode
       if args.backend == :auto
-          try
-              max_free_mem = CUDA.free_memory()
-              coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
-                  imagestack, args, kernelsize, max_free_mem; use_gpu=true)
-              CUDA.synchronize()
-          catch e
-              @warn "GPU processing failed, falling back to CPU" exception=e
-              GC.gc(false)
-              CUDA.reclaim()
-              device_id = -1
-              actual_backend = :cpu
-              args.use_gpu = false
+          gpu_succeeded = false
+          while !gpu_succeeded
+              try
+                  max_free_mem = CUDA.free_memory()
+                  coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
+                      imagestack, args, kernelsize, max_free_mem; use_gpu=true)
+                  CUDA.synchronize()
+                  gpu_succeeded = true
+              catch e
+                  @warn "GPU processing failed, releasing memory and retrying" exception=e
+                  GC.gc(false)
+                  CUDA.reclaim()
+
+                  remaining = args.auto_timeout - (time() - gpu_start)
+                  if remaining <= 0
+                      @warn "GPU retry timeout expired, falling back to CPU"
+                      device_id = -1
+                      actual_backend = :cpu
+                      args.use_gpu = false
+                      break
+                  end
+
+                  # Re-poll NVML with remaining timeout budget
+                  available, new_device_id = poll_gpu_nvml(min_memory_needed;
+                      timeout=remaining, on_wait=args.on_wait)
+                  if available
+                      CUDA.device!(new_device_id)
+                      device_id = new_device_id
+                  else
+                      @warn "No GPU available after retry, falling back to CPU"
+                      device_id = -1
+                      actual_backend = :cpu
+                      args.use_gpu = false
+                      break
+                  end
+              end
           end
       else
           # :gpu mode - no fallback, let errors propagate
