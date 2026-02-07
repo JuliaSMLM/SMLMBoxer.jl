@@ -111,7 +111,7 @@ println("  Running on clean image (CPU)...")
     min_photons = 500.0,            # Detect emitters with ≥500 photons
     boxsize = 11,                   # Larger box for better fitting
     overlap = 3.0,
-    use_gpu = false
+    backend = :cpu
 )
 t_clean = info_clean.elapsed_s
 
@@ -122,7 +122,7 @@ println("  Running on noisy image (CPU)...")
     min_photons = 500.0,
     boxsize = 11,
     overlap = 3.0,
-    use_gpu = false
+    backend = :cpu
 )
 t_noisy = info_noisy.elapsed_s
 
@@ -134,7 +134,7 @@ if CUDA.functional()
         min_photons = 500.0,
         boxsize = 11,
         overlap = 3.0,
-        use_gpu = true
+        backend = :gpu
     )
     t_gpu = info_gpu.elapsed_s
 else

@@ -133,13 +133,25 @@ Tuple of `(ROIBatch, BoxesInfo)`:
 ### How It Works
 The `getboxes()` function applies a Difference of Gaussians (DoG) filter to identify blob-like features. When using the PSF-aware interface, the filter scales are automatically matched to your PSF width for optimal detection sensitivity, and the photon threshold is converted to the appropriate intensity threshold accounting for PSF spreading and filter response.
 
-## Additional Tools 
+### GPU Scheduling
 
-In addition to the `getboxes()` function, *SMLMBoxer.jl* provides a number of lower-level tools that can be useful in processing and analyzing image stacks. These are not exported. 
+SMLMBoxer uses a unified GPU retry loop that handles multi-process contention on shared GPU servers:
 
-- `SMLMBoxer.genlocalmaximage(imagestack, kernelsize; minval=0.0, use_gpu=false)`: Generates an image where local maxima in the original image are the only non-zero pixels. 
+1. **NVML polling** scans all GPUs for one with sufficient free memory and low contention (no CUDA context created)
+2. **GPU processing** is attempted: context creation, DoG filtering, local max detection
+3. **On any failure** (no memory, context race, runtime OOM): GPU memory is released via `GC.gc()` + `CUDA.reclaim()`, then re-polls NVML with remaining timeout
+4. **On timeout**: `:auto` falls back to CPU, `:gpu` errors
 
-- `SMLMBoxer.findlocalmax(imagestack, kernelsize; minval=0.0, use_gpu=false)`: Returns the coordinates of local maxima in an image. 
+Memory is always reclaimed after GPU processing (both success and failure) so finished jobs don't block other processes waiting for GPU resources.
 
-- `SMLMBoxer.convolve(imagestack, kernel; use_gpu=false)`: This function convolves an image stack with a given kernel.
+```julia
+# Wait up to 30s for GPU, fall back to CPU
+(roi_batch, info) = getboxes(imagestack, camera;
+    psf_sigma=0.13, backend=:auto, auto_timeout=30.0)
+
+# Monitor wait progress
+(roi_batch, info) = getboxes(imagestack, camera;
+    psf_sigma=0.13, backend=:auto,
+    on_wait=(elapsed, avail, req) -> @info "Waiting..." elapsed avail req)
+```
 

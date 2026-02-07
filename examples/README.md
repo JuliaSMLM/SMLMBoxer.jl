@@ -122,8 +122,8 @@ psf_sigma_pixels = psf_sigma_microns / pixel_size_microns
 
 # Detect with clear physical parameters
 roi_batch = getboxes(images, camera;
-    psf_sigma = psf_sigma_pixels,  # Automatically sets DoG scales
-    min_photons = 500.0)            # Physical photon threshold
+    psf_sigma = psf_sigma_microns,  # Automatically sets DoG scales
+    min_photons = 500.0)             # Physical photon threshold
 ```
 
 **Benefits:**

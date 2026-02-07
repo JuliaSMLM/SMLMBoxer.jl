@@ -145,7 +145,7 @@ println()
     min_photons = 50.0,             # Photon threshold (auto-converts to intensity)
     boxsize = 11,                   # 11×11 pixel ROIs
     overlap = 3.0,                  # Max 3 pixel overlap
-    use_gpu = false                 # Use CPU (set to true if CUDA available)
+    backend = :cpu                   # Use :auto for GPU acceleration
 )
 t_detect = info.elapsed_s
 

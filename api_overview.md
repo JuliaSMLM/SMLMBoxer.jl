@@ -34,12 +34,31 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 - High-noise pixels: low weight (reduced false positives)
 - GPU-accelerated via KernelAbstractions.jl (device-agnostic kernels)
 
-### GPU Acceleration
-- Standard DoG: NNlib with cuDNN backend (10-100× speedup)
+### GPU Acceleration and Scheduling
+- Standard DoG: NNlib with cuDNN backend (10-100x speedup)
 - Variance-weighted: KernelAbstractions custom kernels (same code for CPU/GPU)
-- Multi-GPU support: Automatically selects GPU with most free memory
-- Memory waiting: Waits for GPU memory availability instead of crashing when busy
-- Backend selection: `:cpu`, `:gpu`, or `:auto` with configurable timeouts
+- Multi-GPU support: NVML-based polling selects GPU with most free memory across all devices
+
+**Unified GPU retry loop** handles multi-process contention:
+1. Poll all GPUs via NVML (no CUDA context creation) for sufficient free memory and low utilization
+2. Acquire GPU context and run processing
+3. On any failure (no memory, TOCTOU context race, runtime OOM): release memory via `GC.gc() + CUDA.reclaim()`, re-poll NVML with remaining timeout
+4. On timeout: `:auto` falls back to CPU, `:gpu` errors
+5. On success: reclaim GPU memory pool so finished jobs don't block other processes
+
+**Backend modes:**
+- `:cpu` - Always CPU, no GPU involvement
+- `:gpu` - Require GPU, retry until `gpu_timeout` (default: Inf), error if unavailable
+- `:auto` - Try GPU, retry until `auto_timeout` (default: 30s), fall back to CPU
+
+**Wait progress callback:**
+```julia
+config = BoxerConfig(
+    psf_sigma=0.13,
+    backend=:auto,
+    on_wait=(elapsed, available, required) -> @info "Waiting for GPU" elapsed available required
+)
+```
 
 ## Configuration
 
@@ -66,6 +85,7 @@ Configuration struct for ROI detection parameters. Supports `@kwdef` constructio
     backend::Symbol = :auto       # :cpu, :gpu, or :auto
     auto_timeout::Float64 = 30.0  # Max wait for GPU in :auto mode
     gpu_timeout::Float64 = Inf    # Max wait in :gpu mode
+    on_wait::Union{Function,Nothing} = nothing  # Optional wait progress callback
 end
 ```
 
@@ -87,7 +107,7 @@ config = BoxerConfig(psf_sigma=0.13, backend=:gpu, gpu_timeout=60.0)
 
 **Config-based (recommended for reusable settings):**
 ```julia
-getboxes(imagestack, camera, config::BoxerConfig; on_wait=nothing) -> (ROIBatch, BoxesInfo)
+getboxes(imagestack, camera, config::BoxerConfig) -> (ROIBatch, BoxesInfo)
 ```
 
 **Kwargs-based (convenient for one-off calls):**
@@ -358,10 +378,9 @@ Implements optimal inverse variance weighting for spatially-varying noise.
 
 - **GPU Memory Management**: Automatically batches frames if image stack exceeds GPU memory
 - **Type Stability**: All inputs converted to Float32 at entry point
-- **Multi-GPU Support**: `find_best_gpu()` selects GPU with most free memory when multiple GPUs available
-- **Memory Waiting**: With `:gpu` or `:auto` backend, waits for GPU memory instead of crashing
-  - `:auto` waits up to 30s then falls back to CPU
-  - `:gpu` waits indefinitely (or until `gpu_timeout`)
-  - Uses polling with jittered backoff to avoid thundering herd
+- **Multi-GPU NVML Polling**: Scans all GPUs via NVML without creating CUDA contexts. Checks free memory, process contention, and compute utilization. First GPU with sufficient memory and low contention wins.
+- **Contention-Safe Retry**: Unified retry loop handles all GPU failure modes (insufficient memory, TOCTOU context race, runtime OOM). Releases memory and re-polls with remaining timeout budget.
+- **Memory Pool Reclaim**: Calls `GC.gc() + CUDA.reclaim()` after both successful and failed GPU processing to return memory to the system, preventing finished jobs from blocking other processes.
+- **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting
-- **Typical Speedup**: 10-100× with GPU depending on image size and number of frames
+- **Typical Speedup**: 10-100x with GPU depending on image size and number of frames

@@ -165,7 +165,7 @@ println()
     min_photons = 50.0,
     boxsize = 11,
     overlap = 3.0,
-    use_gpu = false
+    backend = :cpu
 )
 t_detect_scmos = info_scmos.elapsed_s
 
@@ -185,7 +185,7 @@ println("Step 6: Detecting with IdealCamera (for comparison)...")
     min_photons = 50.0,
     boxsize = 11,
     overlap = 3.0,
-    use_gpu = false
+    backend = :cpu
 )
 t_detect_ideal = info_ideal.elapsed_s
 
