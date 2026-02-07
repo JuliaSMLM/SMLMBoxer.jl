@@ -4,8 +4,10 @@ Particle/blob detection in SMLM image stacks using difference-of-Gaussians filte
 
 ## Exports
 
-**Total exports:** 4
+**Total exports:** 6
 - `getboxes` - Main detection function
+- `BoxerConfig` - Configuration struct for detection parameters
+- `BoxesInfo` - Metadata struct returned alongside ROIBatch
 - `recommend_batch_size` - Memory-aware batch sizing utility
 - `ROIBatch` - Re-exported from SMLMData.jl
 - `SingleROI` - Re-exported from SMLMData.jl
@@ -32,33 +34,108 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 - High-noise pixels: low weight (reduced false positives)
 - GPU-accelerated via KernelAbstractions.jl (device-agnostic kernels)
 
-### GPU Acceleration
-- Standard DoG: NNlib with cuDNN backend (10-100× speedup)
+### GPU Acceleration and Scheduling
+- Standard DoG: NNlib with cuDNN backend (10-100x speedup)
 - Variance-weighted: KernelAbstractions custom kernels (same code for CPU/GPU)
-- Multi-GPU support: Automatically selects GPU with most free memory
-- Memory waiting: Waits for GPU memory availability instead of crashing when busy
-- Backend selection: `:cpu`, `:gpu`, or `:auto` with configurable timeouts
+- Multi-GPU support: NVML-based polling selects GPU with most free memory across all devices
+
+**Unified GPU retry loop** handles multi-process contention:
+1. Poll all GPUs via NVML (no CUDA context creation) for sufficient free memory and low utilization
+2. Acquire GPU context and run processing
+3. On any failure (no memory, TOCTOU context race, runtime OOM): release memory via `GC.gc() + CUDA.reclaim()`, re-poll NVML with remaining timeout
+4. On timeout: `:auto` falls back to CPU, `:gpu` errors
+5. On success: reclaim GPU memory pool so finished jobs don't block other processes
+
+**Backend modes:**
+- `:cpu` - Always CPU, no GPU involvement
+- `:gpu` - Require GPU, retry until `gpu_timeout` (default: Inf), error if unavailable
+- `:auto` - Try GPU, retry until `auto_timeout` (default: 30s), fall back to CPU
+
+**Wait progress callback:**
+```julia
+config = BoxerConfig(
+    psf_sigma=0.13,
+    backend=:auto,
+    on_wait=(elapsed, available, required) -> @info "Waiting for GPU" elapsed available required
+)
+```
+
+## Configuration
+
+### `BoxerConfig`
+
+Configuration struct for ROI detection parameters. Supports `@kwdef` construction with defaults.
+
+```julia
+@kwdef struct BoxerConfig
+    # PSF-aware interface (recommended)
+    psf_sigma::Union{Float64,Nothing} = nothing  # PSF sigma in microns
+    min_photons::Float64 = 500.0                 # Minimum photons for detection
+
+    # Advanced interface (direct control)
+    sigma_small::Float64 = 1.0    # Small Gaussian sigma in pixels
+    sigma_large::Float64 = 2.0    # Large Gaussian sigma in pixels
+    minval::Float64 = 0.0         # DoG intensity threshold
+
+    # Box parameters
+    boxsize::Int = 7              # ROI size in pixels
+    overlap::Float64 = 2.0        # Max overlap between detections
+
+    # Backend parameters
+    backend::Symbol = :auto       # :cpu, :gpu, or :auto
+    auto_timeout::Float64 = 30.0  # Max wait for GPU in :auto mode
+    gpu_timeout::Float64 = Inf    # Max wait in :gpu mode
+    on_wait::Union{Function,Nothing} = nothing  # Optional wait progress callback
+end
+```
+
+**Usage:**
+```julia
+# PSF-aware (recommended)
+config = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+
+# Advanced (direct control)
+config = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=10.0)
+
+# GPU-specific
+config = BoxerConfig(psf_sigma=0.13, backend=:gpu, gpu_timeout=60.0)
+```
 
 ## Core Function
 
-### `getboxes(imagestack, camera=nothing; kwargs...) -> ROIBatch`
+### `getboxes` - Two Calling Conventions
+
+**Config-based (recommended for reusable settings):**
+```julia
+getboxes(imagestack, camera, config::BoxerConfig) -> (ROIBatch, BoxesInfo)
+```
+
+**Kwargs-based (convenient for one-off calls):**
+```julia
+getboxes(imagestack, camera=nothing; kwargs...) -> (ROIBatch, BoxesInfo)
+```
+
+Both conventions are equivalent - kwargs are forwarded to a BoxerConfig internally.
 
 Main detection function. Applies DoG filtering, finds local maxima, extracts ROI patches.
 
 **Arguments:**
 - `imagestack::AbstractArray{<:Real}` - Input image stack (2D or 3D)
 - `camera::Union{AbstractCamera,Nothing}` - Camera object (IdealCamera or SCMOSCamera)
+- `config::BoxerConfig` - Configuration struct (config-based convention)
 
-**Primary Interface (PSF-Aware, Recommended):**
+**Kwargs (kwargs-based convention):**
+
+*PSF-Aware Interface (Recommended):*
 - `psf_sigma::Real` - PSF sigma in microns (requires camera for pixel size conversion)
 - `min_photons::Real` - Minimum total photons for detection (default: 500.0)
 
-**Advanced Interface (Direct Control):**
+*Advanced Interface (Direct Control):*
 - `sigma_small::Real` - Small Gaussian sigma in pixels (default: 1.0)
 - `sigma_large::Real` - Large Gaussian sigma in pixels (default: 2.0)
 - `minval::Real` - DoG intensity threshold (default: 0.0)
 
-**Other Parameters:**
+*Other Parameters:*
 - `boxsize::Int` - ROI size in pixels (default: 7)
 - `overlap::Real` - Maximum overlap between detections in pixels (default: 2.0)
 - `backend::Symbol` - Compute backend: `:cpu`, `:gpu`, or `:auto` (default: `:auto`)
@@ -69,13 +146,24 @@ Main detection function. Applies DoG filtering, finds local maxima, extracts ROI
 - `gpu_timeout::Real` - Max seconds to wait in `:gpu` mode (default: Inf)
 - `on_wait::Function` - Optional callback `(elapsed, available, required) -> nothing` for wait progress
 
-**Returns:** `ROIBatch` with fields:
+**Returns:** Tuple of `(ROIBatch, BoxesInfo)`
+
+`ROIBatch` with fields:
 - `data` - ROI stack (boxsize × boxsize × n_rois)
 - `x_corners` - Vector of x (column) corner positions
 - `y_corners` - Vector of y (row) corner positions
 - `frame_indices` - Vector of frame indices for each ROI
 - `camera` - Camera object (provided or default IdealCamera)
 - `roi_size` - Size of each ROI (square)
+
+`BoxesInfo` with fields:
+- `backend` - Compute backend used (`:gpu` or `:cpu`)
+- `elapsed_s` - Wall time in seconds
+- `device_id` - GPU device ID (0-based), or -1 for CPU
+- `n_rois` - Number of ROIs detected
+- `batch_size` - Frames per batch during processing
+- `n_batches` - Number of batches processed
+- `memory_per_batch` - Estimated memory per batch in bytes
 
 ### `recommend_batch_size(height, width; backend=:auto, memory_fraction=0.8) -> Int`
 
@@ -112,7 +200,7 @@ println("Load up to $max_frames frames at a time")
 for chunk_start in 1:max_frames:total_frames
     chunk_end = min(chunk_start + max_frames - 1, total_frames)
     imagestack = load_frames(chunk_start:chunk_end)
-    roi_batch = getboxes(imagestack, camera; psf_sigma=0.13)
+    (roi_batch, info) = getboxes(imagestack, camera; psf_sigma=0.13)
     # ... process results
 end
 ```
@@ -145,8 +233,12 @@ using SMLMBoxer, SMLMData
 # Create camera with physical pixel size (100nm pixels)
 camera = IdealCamera(1:256, 1:256, 0.1f0)
 
-# Detect particles with PSF-aware thresholding
-roi_batch = getboxes(imagestack, camera;
+# Config-based (recommended for reusable settings)
+config = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+(roi_batch, info) = getboxes(imagestack, camera, config)
+
+# OR kwargs-based (convenient for one-off calls)
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,        # 130nm PSF in microns
     min_photons = 500.0,     # Minimum 500 photons
     boxsize = 11)
@@ -157,6 +249,10 @@ boxes = roi_batch.data              # 11×11×n ROI patches
 positions_x = roi_batch.x_corners   # Column positions
 positions_y = roi_batch.y_corners   # Row positions
 frames = roi_batch.frame_indices
+
+# Check processing info
+println("Backend: ", info.backend)
+println("Elapsed: ", info.elapsed_s * 1000, " ms")
 ```
 
 ### sCMOS Variance-Weighted Detection
@@ -168,7 +264,7 @@ readnoise_map = Float32.(load_readnoise_calibration("camera_calib.mat"))
 camera = SCMOSCamera(256, 256, 0.1f0, readnoise_map)
 
 # Variance-weighted detection (automatically enabled)
-roi_batch = getboxes(imagestack, camera;
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,
     min_photons = 300.0,  # Lower threshold possible with noise weighting
     backend = :auto)      # GPU with CPU fallback
@@ -177,7 +273,13 @@ roi_batch = getboxes(imagestack, camera;
 ### Advanced: Direct Parameter Control
 ```julia
 # Expert mode: bypass PSF-aware interface
-roi_batch = getboxes(imagestack;
+
+# Config-based
+config = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=10.0, boxsize=9, overlap=1.5)
+(roi_batch, info) = getboxes(imagestack, nothing, config)
+
+# OR kwargs-based
+(roi_batch, info) = getboxes(imagestack;
     sigma_small = 1.5,   # Custom filter sigma (pixels)
     sigma_large = 3.0,
     minval = 10.0,       # Direct intensity threshold
@@ -187,7 +289,7 @@ roi_batch = getboxes(imagestack;
 
 ### Processing Individual ROIs
 ```julia
-roi_batch = getboxes(imagestack, camera; psf_sigma=0.13)
+(roi_batch, info) = getboxes(imagestack, camera; psf_sigma=0.13)
 
 # Iterate over ROIs
 for roi in roi_batch
@@ -196,7 +298,7 @@ for roi in roi_batch
     # - roi.corner: (x, y) corner position
     # - roi.frame_idx: Frame index
     # - roi.camera: Camera ROI calibration
-    
+
     fit_gaussian(roi.data)
 end
 
@@ -276,10 +378,9 @@ Implements optimal inverse variance weighting for spatially-varying noise.
 
 - **GPU Memory Management**: Automatically batches frames if image stack exceeds GPU memory
 - **Type Stability**: All inputs converted to Float32 at entry point
-- **Multi-GPU Support**: `find_best_gpu()` selects GPU with most free memory when multiple GPUs available
-- **Memory Waiting**: With `:gpu` or `:auto` backend, waits for GPU memory instead of crashing
-  - `:auto` waits up to 30s then falls back to CPU
-  - `:gpu` waits indefinitely (or until `gpu_timeout`)
-  - Uses polling with jittered backoff to avoid thundering herd
+- **Multi-GPU NVML Polling**: Scans all GPUs via NVML without creating CUDA contexts. Checks free memory, process contention, and compute utilization. First GPU with sufficient memory and low contention wins.
+- **Contention-Safe Retry**: Unified retry loop handles all GPU failure modes (insufficient memory, TOCTOU context race, runtime OOM). Releases memory and re-polls with remaining timeout budget.
+- **Memory Pool Reclaim**: Calls `GC.gc() + CUDA.reclaim()` after both successful and failed GPU processing to return memory to the system, preventing finished jobs from blocking other processes.
+- **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting
-- **Typical Speedup**: 10-100× with GPU depending on image size and number of frames
+- **Typical Speedup**: 10-100x with GPU depending on image size and number of frames

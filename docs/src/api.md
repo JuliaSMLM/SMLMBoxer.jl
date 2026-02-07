@@ -104,7 +104,7 @@ I_{\text{filtered}} &= \frac{N_{\text{photons}}}{2\pi \sigma_{\text{eff}}^2} \\
 
 where the 0.65 factor accounts for the reduction in peak intensity from the DoG operation (empirically determined for ``\sigma_{\text{large}} = 2\sigma_{\text{small}}``).
 
-### GPU Acceleration
+### GPU Acceleration and Scheduling
 
 SMLMBoxer uses multiple GPU acceleration strategies:
 
@@ -112,7 +112,31 @@ SMLMBoxer uses multiple GPU acceleration strategies:
 2. **Variance-Weighted Filtering**: KernelAbstractions.jl for device-agnostic kernels
 3. **Automatic Memory Management**: Batched processing for large datasets exceeding GPU memory
 
-The `use_gpu` parameter controls GPU usage, with automatic fallback to CPU if CUDA is unavailable.
+The `backend` parameter controls GPU usage: `:cpu`, `:gpu`, or `:auto` (default).
+
+#### Unified GPU Retry Loop
+
+GPU scheduling uses a single retry loop that handles all failure modes under multi-process contention:
+
+1. **NVML Polling**: Scans all GPUs via NVIDIA Management Library without creating CUDA contexts. Checks free memory (with 1.5x safety margin), process contention, and compute utilization (>90% = saturated). Uses jittered backoff to avoid thundering herd.
+
+2. **GPU Acquisition + Processing**: Creates CUDA context on the selected device, runs DoG filtering and local max detection.
+
+3. **Failure Recovery**: On any CUDA error (context creation OOM, runtime OOM, driver errors):
+   - Releases GPU memory: `GC.gc(false)` + `CUDA.reclaim()`
+   - Re-polls NVML with remaining timeout budget
+   - Retries on next available GPU
+
+4. **Timeout Behavior**:
+   - `:auto` mode: falls back to CPU after `auto_timeout` (default 30s)
+   - `:gpu` mode: errors after `gpu_timeout` (default Inf)
+
+5. **Post-Processing Cleanup**: GPU memory pool is reclaimed after both successful and failed processing, so finished jobs release memory for other processes.
+
+This design handles three failure modes uniformly:
+- **No free GPU memory**: NVML poll waits for memory to free up
+- **TOCTOU context race**: NVML says "memory OK" but another process grabs it before `CUDA.device!()` completes
+- **Runtime OOM**: GPU acquired but OOM during actual computation (e.g., cuDNN workspace)
 
 ### Coordinate System
 

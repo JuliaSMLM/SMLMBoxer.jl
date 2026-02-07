@@ -29,10 +29,10 @@ function run_gpu_wait_tests()
     # Test 1: backend=:cpu should always use CPU
     println("\n[1/6] Testing backend=:cpu...")
     try
-        result = getboxes(img, camera;
+        (result, info) = getboxes(img, camera;
             backend=:cpu,
             sigma_small=1.5, sigma_large=3.0, minval=0.1)
-        println("      Passed: $(length(result)) ROIs detected on CPU")
+        println("      Passed: $(length(result)) ROIs detected on CPU (backend=$(info.backend))")
     catch e
         println("      FAILED: $e")
         all_passed = false
@@ -41,11 +41,11 @@ function run_gpu_wait_tests()
     # Test 2: backend=:auto should work (GPU or CPU fallback)
     println("\n[2/6] Testing backend=:auto...")
     try
-        result = getboxes(img, camera;
+        (result, info) = getboxes(img, camera;
             backend=:auto,
             auto_timeout=5.0,
             sigma_small=1.5, sigma_large=3.0, minval=0.1)
-        println("      Passed: $(length(result)) ROIs detected")
+        println("      Passed: $(length(result)) ROIs detected (backend=$(info.backend))")
     catch e
         println("      FAILED: $e")
         all_passed = false
@@ -61,11 +61,11 @@ function run_gpu_wait_tests()
         # With impossibly short timeout, should either:
         # a) Fall back to CPU with warning (if GPU memory check takes time)
         # b) Still use GPU (if memory was immediately available)
-        result = getboxes(large_img, large_camera;
+        (result, info) = getboxes(large_img, large_camera;
             backend=:auto,
             auto_timeout=0.001,  # Impossibly short
             sigma_small=1.5, sigma_large=3.0, minval=0.1)
-        println("      Passed: $(length(result)) ROIs (GPU memory was immediately available)")
+        println("      Passed: $(length(result)) ROIs (backend=$(info.backend))")
     catch e
         println("      Note: $e")
         all_passed = false
@@ -81,7 +81,7 @@ function run_gpu_wait_tests()
     end
 
     try
-        result = getboxes(img, camera;
+        (result, info) = getboxes(img, camera;
             backend=:auto,
             auto_timeout=2.0,
             on_wait=on_wait_cb,
@@ -100,11 +100,11 @@ function run_gpu_wait_tests()
     if CUDA.functional()
         println("\n[5/6] Testing backend=:gpu (GPU required)...")
         try
-            result = getboxes(img, camera;
+            (result, info) = getboxes(img, camera;
                 backend=:gpu,
                 gpu_timeout=10.0,
                 sigma_small=1.5, sigma_large=3.0, minval=0.1)
-            println("      Passed: $(length(result)) ROIs detected on GPU")
+            println("      Passed: $(length(result)) ROIs detected on GPU (device=$(info.device_id))")
         catch e
             println("      FAILED: $e")
             all_passed = false
@@ -113,13 +113,14 @@ function run_gpu_wait_tests()
         println("\n[5/6] Skipping backend=:gpu test (no CUDA)")
     end
 
-    # Test 6: Backwards compatibility with use_gpu kwarg
-    println("\n[6/6] Testing backwards compatibility (use_gpu=false)...")
+    # Test 6: Explicit backend=:cpu
+    println("\n[6/6] Testing explicit backend=:cpu...")
     try
-        result = getboxes(img, camera;
-            use_gpu=false,
+        (result, info) = getboxes(img, camera;
+            backend=:cpu,
             sigma_small=1.5, sigma_large=3.0, minval=0.1)
-        println("      Passed: $(length(result)) ROIs detected (use_gpu=false -> CPU)")
+        @assert info.backend == :cpu "Expected :cpu backend"
+        println("      Passed: $(length(result)) ROIs detected (backend=$(info.backend))")
     catch e
         println("      FAILED: $e")
         all_passed = false
@@ -196,13 +197,13 @@ function test_memory_pressure_wait()
 
         println("\nRunning getboxes with memory pressure...")
         try
-            result = getboxes(img, camera;
+            (result, info) = getboxes(img, camera;
                 backend=:auto,
                 auto_timeout=3.0,
                 on_wait=on_wait_cb,
                 sigma_small=1.5, sigma_large=3.0, minval=0.1)
 
-            println("Result: $(length(result)) ROIs")
+            println("Result: $(length(result)) ROIs (backend=$(info.backend))")
 
             if wait_triggered[]
                 println("Wait callback WAS triggered - waiting behavior verified!")

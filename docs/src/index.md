@@ -76,7 +76,7 @@ camera = SCMOSCamera(
 roi_batch = getboxes(imagestack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
-    use_gpu = true)     # GPU acceleration for variance weighting
+    backend = :auto)    # GPU with CPU fallback
 ```
 
 ## How It Works

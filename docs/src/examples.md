@@ -44,7 +44,7 @@ roi_batch = getboxes(Float32.(imagestack), camera;
     psf_sigma = 0.13,      # PSF sigma in microns
     min_photons = 500.0,   # Detection threshold
     boxsize = 11,          # ROI size
-    use_gpu = false)       # Set to true for GPU acceleration
+    backend = :cpu)        # Use :auto for GPU acceleration
 
 # Check results
 println("Ground truth: $(length(emitters)) emitters")
@@ -117,7 +117,7 @@ roi_batch = getboxes(Float32.(imagestack), camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
     boxsize = 11,
-    use_gpu = true)  # GPU acceleration for variance weighting
+    backend = :auto)  # GPU with CPU fallback
 
 # Analyze detection uniformity across noise regions
 function count_by_noise_region(batch, n_pixels, split_col)
@@ -169,7 +169,7 @@ for sigma in sigma_values
         sigma_small = sigma,
         sigma_large = 2.0 * sigma,
         minval = 10.0,
-        use_gpu = false)
+        backend = :cpu)
 
     push!(results, (sigma=sigma, n_detected=length(roi_batch)))
 end
@@ -201,16 +201,16 @@ end
 roi_batch_gpu = getboxes(imagestack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
-    use_gpu = true)  # Automatically uses GPU if available
+    backend = :auto)  # Try GPU, fall back to CPU
 
 # Benchmark GPU vs CPU
 using BenchmarkTools
 
 @time roi_batch_cpu = getboxes(imagestack, camera;
-    psf_sigma = 0.13, min_photons = 500.0, use_gpu = false)
+    psf_sigma = 0.13, min_photons = 500.0, backend = :cpu)
 
 @time roi_batch_gpu = getboxes(imagestack, camera;
-    psf_sigma = 0.13, min_photons = 500.0, use_gpu = true)
+    psf_sigma = 0.13, min_photons = 500.0, backend = :auto)
 ```
 
 ### Large Dataset Processing
@@ -223,7 +223,7 @@ large_stack = zeros(Float32, 512, 512, 1000)  # 1000 frames
 roi_batch = getboxes(large_stack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
-    use_gpu = true)  # Batches frames to fit GPU memory
+    backend = :auto)  # Batches frames to fit GPU memory
 
 println("Processed $(size(large_stack, 3)) frames")
 println("Total detections: $(length(roi_batch))")

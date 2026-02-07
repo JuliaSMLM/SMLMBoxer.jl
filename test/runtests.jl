@@ -14,13 +14,13 @@ using Test
         image[30, 60] = 10
 
         # Get boxes without camera (positional interface)
-        roi_batch = getboxes(image;
+        (roi_batch, info) = getboxes(image;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.1,
-            use_gpu=false
+            backend=:cpu
         )
 
         # Test ROIBatch structure
@@ -30,6 +30,12 @@ using Test
         @test hasfield(typeof(roi_batch), :y_corners)
         @test hasfield(typeof(roi_batch), :frame_indices)
         @test hasfield(typeof(roi_batch), :camera)
+
+        # Test BoxesInfo structure
+        @test info isa BoxesInfo
+        @test info.backend == :cpu
+        @test info.elapsed_s > 0
+        @test info.device_id == -1  # CPU
 
         # Should detect two peaks
         @test size(roi_batch.data) == (5, 5, 2)
@@ -54,13 +60,13 @@ using Test
         image[20, 50] = 20
         image[21, 51] = 10
 
-        roi_batch = getboxes(image;
+        (roi_batch, info) = getboxes(image;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.1,
-            use_gpu=false
+            backend=:cpu
         )
 
         # Should detect only one peak (overlap removed)
@@ -72,6 +78,10 @@ using Test
         @test roi_batch.x_corners[1] == 48  # x (col)
         @test roi_batch.y_corners[1] == 18  # y (row)
         @test roi_batch.frame_indices[1] == 1
+
+        # BoxesInfo should be valid
+        @test info isa BoxesInfo
+        @test info.elapsed_s > 0
     end
 
     @testset "New API with IdealCamera" begin
@@ -89,13 +99,13 @@ using Test
         )
 
         # Get boxes with camera
-        roi_batch = getboxes(image, camera;
+        (roi_batch, info) = getboxes(image, camera;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.1,
-            use_gpu=false
+            backend=:cpu
         )
 
         # Should detect two peaks
@@ -116,6 +126,10 @@ using Test
         # Check camera is present and correct type
         @test roi_batch.camera isa IdealCamera
         @test roi_batch.camera === camera
+
+        # BoxesInfo should be valid
+        @test info isa BoxesInfo
+        @test info.elapsed_s > 0
     end
 
     @testset "New API with SCMOSCamera (scalar params)" begin
@@ -135,13 +149,13 @@ using Test
             qe = 0.9f0
         )
 
-        roi_batch = getboxes(image, camera;
+        (roi_batch, info) = getboxes(image, camera;
             boxsize=5,
             overlap=3.0,
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.1,
-            use_gpu=false
+            backend=:cpu
         )
 
         # Should detect the peak
@@ -153,6 +167,10 @@ using Test
         @test roi_batch.camera === camera
         @test roi_batch.camera.offset == 100.0f0
         @test roi_batch.camera.gain == 2.0f0
+
+        # BoxesInfo should be valid
+        @test info isa BoxesInfo
+        @test info.elapsed_s > 0
     end
 
     @testset "Rectangular SCMOSCamera with per-pixel calibration" begin
@@ -223,11 +241,11 @@ using Test
 
         # Use PSF-aware interface with physical units (microns)
         psf_sigma_microns = 0.13f0  # 130nm PSF
-        roi_batch = getboxes(image, camera;
+        (roi_batch, info) = getboxes(image, camera;
             psf_sigma = psf_sigma_microns,  # In microns (auto-converts to pixels)
             min_photons = 500.0,             # Should detect our 1000 photon peak
             boxsize = 11,
-            use_gpu = false
+            backend = :cpu
         )
 
         # Should detect the peak
@@ -239,12 +257,16 @@ using Test
         @test roi_batch.x_corners[1] == 45  # x (col)
         @test roi_batch.y_corners[1] == 45  # y (row)
 
+        # BoxesInfo should be valid
+        @test info isa BoxesInfo
+        @test info.elapsed_s > 0
+
         # Test with higher threshold - should not detect
-        roi_batch_high = getboxes(image, camera;
+        (roi_batch_high, _) = getboxes(image, camera;
             psf_sigma = psf_sigma_microns,
             min_photons = 5000.0,  # Way above our peak
             boxsize = 11,
-            use_gpu = false
+            backend = :cpu
         )
         @test length(roi_batch_high) == 0
     end
@@ -254,16 +276,55 @@ using Test
         image = zeros(Float32, 100, 100)
         image[20, 50] = 10
 
-        roi_batch = getboxes(image;
+        (roi_batch, info) = getboxes(image;
             boxsize = 5,
             sigma_small = 1.0,
             sigma_large = 2.0,
             minval = 0.1,
-            use_gpu = false
+            backend = :cpu
         )
 
         @test length(roi_batch) >= 1
         @test size(roi_batch.data, 3) >= 1
+
+        # BoxesInfo should be valid
+        @test info isa BoxesInfo
+        @test info.elapsed_s > 0
+    end
+
+    @testset "BoxerConfig calling convention" begin
+        # Test config-based calling
+        image = zeros(Float32, 100, 100)
+        image[50, 50] = 1000.0
+
+        camera = IdealCamera(1:101, 1:101, 0.1f0)
+
+        # PSF-aware config
+        config_psf = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+        @test config_psf isa BoxerConfig
+        @test config_psf.psf_sigma == 0.13
+        @test config_psf.boxsize == 11
+
+        (roi_batch, info) = getboxes(image, camera, config_psf)
+        @test length(roi_batch) >= 1
+        @test info isa BoxesInfo
+
+        # Advanced config (sigma_small/sigma_large)
+        config_adv = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=0.1, boxsize=7, backend=:cpu)
+        @test config_adv.psf_sigma === nothing
+        @test config_adv.sigma_small == 1.5
+        @test config_adv.backend == :cpu
+
+        image2 = zeros(Float32, 100, 100)
+        image2[20, 50] = 10
+
+        (roi_batch2, info2) = getboxes(image2, nothing, config_adv)
+        @test info2.backend == :cpu
+
+        # Kwargs should produce same result as config
+        (roi_batch3, info3) = getboxes(image2;
+            sigma_small=1.5, sigma_large=3.0, minval=0.1, boxsize=7, backend=:cpu)
+        @test length(roi_batch2) == length(roi_batch3)
     end
 
     @testset "sCMOS variance-weighted detection (per-pixel)" begin
@@ -288,13 +349,13 @@ using Test
             qe = 0.9f0
         )
 
-        roi_batch = getboxes(image, camera;
+        (roi_batch, info) = getboxes(image, camera;
             boxsize=7,
             overlap=3.0,
             sigma_small=1.0,
             sigma_large=2.0,
             minval=0.5,  # Threshold to potentially reject noisy spot
-            use_gpu=false
+            backend=:cpu
         )
 
         # With variance weighting, the low-noise spot should be detected
@@ -306,6 +367,10 @@ using Test
         @test roi_batch.camera isa SCMOSCamera
         @test roi_batch.camera.readnoise isa AbstractArray
         @test size(roi_batch.camera.readnoise) == (100, 100)  # Full image readnoise map
+
+        # BoxesInfo should be valid
+        @test info isa BoxesInfo
+        @test info.elapsed_s > 0
     end
 
 end

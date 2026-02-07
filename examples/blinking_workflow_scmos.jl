@@ -160,18 +160,17 @@ println("  Detection threshold: 50 photons (matched to framerate)")
 println("  Using variance-weighted DoG filtering (sCMOS-optimized)")
 println()
 
-t_start = time()
-roi_batch_scmos = getboxes(images_scmos, camera_scmos;
+(roi_batch_scmos, info_scmos) = getboxes(images_scmos, camera_scmos;
     psf_sigma = sim_params.σ_psf,  # Physical units (microns)
     min_photons = 50.0,
     boxsize = 11,
     overlap = 3.0,
-    use_gpu = false
+    backend = :cpu
 )
-t_detect_scmos = time() - t_start
+t_detect_scmos = info_scmos.elapsed_s
 
 n_detected_scmos = length(roi_batch_scmos)
-println("  sCMOS detection complete ($(round(t_detect_scmos * 1000, digits=1)) ms)")
+println("  sCMOS detection complete ($(round(t_detect_scmos * 1000, digits=1)) ms, backend=$(info_scmos.backend))")
 println("  Detected: $n_detected_scmos")
 println("  Detection rate: $(round(n_detected_scmos / n_emitters * 100, digits=1))%")
 println()
@@ -181,15 +180,14 @@ println()
 # ============================================================================
 println("Step 6: Detecting with IdealCamera (for comparison)...")
 
-t_start = time()
-roi_batch_ideal = getboxes(images_ideal, camera_ideal;
+(roi_batch_ideal, info_ideal) = getboxes(images_ideal, camera_ideal;
     psf_sigma = sim_params.σ_psf,  # Physical units (microns)
     min_photons = 50.0,
     boxsize = 11,
     overlap = 3.0,
-    use_gpu = false
+    backend = :cpu
 )
-t_detect_ideal = time() - t_start
+t_detect_ideal = info_ideal.elapsed_s
 
 n_detected_ideal = length(roi_batch_ideal)
 println("  IdealCamera detection complete ($(round(t_detect_ideal * 1000, digits=1)) ms)")

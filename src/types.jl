@@ -1,4 +1,106 @@
 """
+    BoxerConfig
+
+Configuration for ROI detection via getboxes().
+
+Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
+(sigma_small + sigma_large + minval). PSF-aware is recommended.
+
+# Fields
+
+## PSF-Aware Interface (Recommended)
+- `psf_sigma::Union{Float64,Nothing}`: PSF sigma in microns (e.g., 0.13 for 130nm PSF).
+  Requires camera for pixel conversion. When set, overrides sigma_small/sigma_large/minval.
+- `min_photons::Float64`: Minimum photons for detection (default: 500.0)
+
+## Advanced Interface (Direct Control)
+- `sigma_small::Float64`: Small Gaussian sigma in pixels (default: 1.0)
+- `sigma_large::Float64`: Large Gaussian sigma in pixels (default: 2.0)
+- `minval::Float64`: DoG intensity threshold (default: 0.0)
+
+## Box Parameters
+- `boxsize::Int`: ROI box size in pixels (default: 7)
+- `overlap::Float64`: Max overlap between detections in pixels (default: 2.0)
+
+## Backend Parameters
+- `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
+- `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback (default: 30.0)
+- `gpu_timeout::Float64`: Max wait for GPU in :gpu mode (default: Inf)
+- `on_wait::Union{Function,Nothing}`: Optional callback `(elapsed, available, required) -> nothing` for GPU wait progress (default: nothing)
+
+# Examples
+```julia
+# PSF-aware (recommended)
+config = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+
+# Advanced (direct control)
+config = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=10.0)
+
+# GPU-specific
+config = BoxerConfig(psf_sigma=0.13, backend=:gpu, gpu_timeout=60.0)
+```
+"""
+Base.@kwdef struct BoxerConfig <: AbstractSMLMConfig
+    # PSF-aware interface
+    psf_sigma::Union{Float64,Nothing} = nothing
+    min_photons::Float64 = 500.0
+
+    # Advanced interface (direct control)
+    sigma_small::Float64 = 1.0
+    sigma_large::Float64 = 2.0
+    minval::Float64 = 0.0
+
+    # Box parameters
+    boxsize::Int = 7
+    overlap::Float64 = 2.0
+
+    # Backend parameters
+    backend::Symbol = :auto
+    auto_timeout::Float64 = 30.0
+    gpu_timeout::Float64 = Inf
+    on_wait::Union{Function,Nothing} = nothing
+end
+
+function Base.show(io::IO, config::BoxerConfig)
+    if config.psf_sigma !== nothing
+        print(io, "BoxerConfig(psf_sigma=$(config.psf_sigma), min_photons=$(config.min_photons), boxsize=$(config.boxsize), backend=$(config.backend))")
+    else
+        print(io, "BoxerConfig(σ_small=$(config.sigma_small), σ_large=$(config.sigma_large), minval=$(config.minval), boxsize=$(config.boxsize), backend=$(config.backend))")
+    end
+end
+
+"""
+    BoxesInfo
+
+Metadata returned alongside ROIBatch from getboxes().
+
+# Fields
+- `backend::Symbol`: Compute backend used (:gpu or :cpu)
+- `elapsed_s::Float64`: Wall time in seconds
+- `device_id::Int`: GPU device ID (0-based), or -1 for CPU
+- `n_rois::Int`: Number of ROIs detected
+- `batch_size::Int`: Frames per batch during processing
+- `n_batches::Int`: Number of batches processed
+- `memory_per_batch::Int`: Estimated memory per batch in bytes
+"""
+struct BoxesInfo <: AbstractSMLMInfo
+    backend::Symbol
+    elapsed_s::Float64
+    device_id::Int
+    n_rois::Int
+    batch_size::Int
+    n_batches::Int
+    memory_per_batch::Int
+end
+
+function Base.show(io::IO, info::BoxesInfo)
+    elapsed_ms = info.elapsed_s * 1000
+    mem_kb = info.memory_per_batch / 1024
+    mem_str = mem_kb >= 1024 ? "$(round(mem_kb/1024, digits=1)) MB" : "$(round(mem_kb, digits=1)) KB"
+    print(io, "BoxesInfo($(info.n_rois) ROIs, $(round(elapsed_ms, digits=1)) ms, $(info.backend), $(info.n_batches) batches × $(info.batch_size), $(mem_str)/batch)")
+end
+
+"""
     get_pixel_size(camera::AbstractCamera)
 
 Extract pixel size from camera pixel edges (in microns).
@@ -120,7 +222,6 @@ When psf_sigma is provided:
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
 - `boxsize::Int`: ROI box size in pixels (default: 7)
 - `overlap::Real`: Maximum overlap between detections in pixels (default: 2.0)
-- `use_gpu::Bool`: Use GPU acceleration (default: true) - DEPRECATED, use backend instead
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
 - `auto_timeout::Real`: Max wait seconds for :auto mode before CPU fallback (default: 30.0)
 - `gpu_timeout::Real`: Max wait seconds for :gpu mode (default: Inf)
@@ -151,7 +252,6 @@ mutable struct GetBoxesArgs
         sigma_small::Union{Real,Nothing} = nothing,
         sigma_large::Union{Real,Nothing} = nothing,
         minval::Union{Real,Nothing} = nothing,
-        use_gpu::Union{Bool,Nothing} = nothing,
         backend::Symbol = :auto,
         auto_timeout::Real = 30.0,
         gpu_timeout::Real = Inf,
@@ -159,7 +259,7 @@ mutable struct GetBoxesArgs
     )
         # Determine which interface is being used
         if psf_sigma !== nothing
-            # NEW INTERFACE: PSF-aware detection (recommended)
+            # PSF-aware detection (recommended)
             # psf_sigma is in physical units (microns) - convert to pixels
             if camera !== nothing
                 pixel_size_μm = get_pixel_size(camera)
@@ -174,27 +274,20 @@ mutable struct GetBoxesArgs
             effective_gain = get_effective_gain(camera)
             min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels; effective_gain=effective_gain)
         else
-            # OLD INTERFACE: Direct control (backward compatible)
+            # Direct control interface
             σ_small = Float32(sigma_small !== nothing ? sigma_small : 1.0)
             σ_large = Float32(sigma_large !== nothing ? sigma_large : 2.0)
             min_val = Float32(minval !== nothing ? minval : 0.0)
         end
 
-        # Handle backwards compatibility: use_gpu overrides backend if explicitly set
-        actual_backend = backend
-        if use_gpu !== nothing
-            actual_backend = use_gpu ? :auto : :cpu
-        end
-
         # Validate backend
-        actual_backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
+        backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
         # use_gpu is determined later in _getboxes_impl based on backend and memory availability
-        # For now, set it based on backend intent (will be refined during processing)
-        initial_use_gpu = actual_backend != :cpu
+        initial_use_gpu = backend != :cpu
 
         new(imagestack, camera, boxsize, Float32(overlap), σ_small, σ_large, min_val,
-            initial_use_gpu, actual_backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait)
+            initial_use_gpu, backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait)
     end
 end
 
@@ -318,7 +411,6 @@ running out of memory.
 - `width::Int`: Image width in pixels
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
 - `memory_fraction::Real`: Fraction of free memory to use (default: 0.8)
-- `use_gpu::Bool`: DEPRECATED - use backend instead
 
 # Returns
 - Maximum recommended number of frames to load at once
@@ -351,29 +443,21 @@ end
 """
 function recommend_batch_size(height::Int, width::Int;
         backend::Symbol=:auto,
-        use_gpu::Union{Bool,Nothing}=nothing,
         memory_fraction::Real=0.8)
     # Memory multiplier: accounts for all processing stages
     # Matches n_copies in _getboxes_impl for consistency
     n_copies = 6
     bytes_per_frame = height * width * sizeof(Float32) * n_copies
 
-    # Handle backwards compatibility
-    actual_backend = backend
-    if use_gpu !== nothing
-        actual_backend = use_gpu ? :auto : :cpu
-    end
-
     # Determine if GPU should be used
-    use_gpu_actual = actual_backend != :cpu && has_cuda() && CUDA.functional()
+    use_gpu_actual = backend != :cpu && has_cuda() && CUDA.functional()
 
     if use_gpu_actual
-        # GPU: find device with most free memory
+        # GPU: find device with most free memory via NVML (no context switch needed)
         max_free_mem = 0
         for i in 0:length(CUDA.devices())-1
-            CUDA.device!(i)
-            free_mem = CUDA.free_memory()
-            max_free_mem = max(max_free_mem, free_mem)
+            info = CUDA.NVML.memory_info(CUDA.NVML.Device(i))
+            max_free_mem = max(max_free_mem, info.free)
         end
         available = max_free_mem * memory_fraction
     else

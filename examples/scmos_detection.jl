@@ -122,15 +122,14 @@ println("  PSF sigma: $(round(psf_sigma_pixels, digits=2)) pixels")
 println("  Detection threshold: 500 photons")
 println()
 
-t_start = time()
-roi_batch = getboxes(img_scmos, camera_scmos;
+(roi_batch, info_cpu) = getboxes(img_scmos, camera_scmos;
     psf_sigma = psf_sigma_pixels,  # PSF-aware detection
     min_photons = 500.0,            # Detect emitters with ≥500 photons
     boxsize = 11,                   # Larger box for better fitting
     overlap = 3.0,
-    use_gpu = false
+    backend = :cpu
 )
-t_cpu = time() - t_start
+t_cpu = info_cpu.elapsed_s
 
 println("  Detected $(length(roi_batch)) spots (CPU)")
 println("  Processing time: $(round(t_cpu * 1000, digits=1)) ms")
@@ -138,17 +137,16 @@ println("  Processing time: $(round(t_cpu * 1000, digits=1)) ms")
 # GPU detection if available
 if CUDA.functional()
     println("  Running GPU detection...")
-    t_start = time()
-    roi_batch_gpu = getboxes(img_scmos, camera_scmos;
+    (roi_batch_gpu, info_gpu) = getboxes(img_scmos, camera_scmos;
         psf_sigma = psf_sigma_pixels,
         min_photons = 500.0,
         boxsize = 11,
         overlap = 3.0,
-        use_gpu = true
+        backend = :gpu
     )
-    t_gpu = time() - t_start
+    t_gpu = info_gpu.elapsed_s
 
-    println("  Detected $(length(roi_batch_gpu)) spots (GPU)")
+    println("  Detected $(length(roi_batch_gpu)) spots (GPU, device=$(info_gpu.device_id))")
     println("  Processing time: $(round(t_gpu * 1000, digits=1)) ms")
     println("  GPU speedup: $(round(t_cpu/t_gpu, digits=1))x")
 end

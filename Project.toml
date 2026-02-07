@@ -1,6 +1,6 @@
 name = "SMLMBoxer"
 uuid = "a7d3b33b-b840-4f8e-b556-99be03134090"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["klidke@unm.edu"]
 
 [deps]
@@ -15,7 +15,7 @@ cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 CUDA = "4, 5"
 KernelAbstractions = "0.9"
 NNlib = "0.9"
-SMLMData = "0.6"
+SMLMData = "0.7"
 cuDNN = "1.4.6"
 julia = "1.9"
 
