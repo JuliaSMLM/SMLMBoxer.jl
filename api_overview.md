@@ -49,7 +49,7 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 **Backend modes:**
 - `:cpu` - Always CPU, no GPU involvement
 - `:gpu` - Require GPU, retry until `gpu_timeout` (default: Inf), error if unavailable
-- `:auto` - Try GPU, retry until `auto_timeout` (default: 30s), fall back to CPU
+- `:auto` - Try GPU, retry until `auto_timeout` (default: 300s), fall back to CPU
 
 **Wait progress callback:**
 ```julia
@@ -83,7 +83,7 @@ Configuration struct for ROI detection parameters. Supports `@kwdef` constructio
 
     # Backend parameters
     backend::Symbol = :auto       # :cpu, :gpu, or :auto
-    auto_timeout::Float64 = 30.0  # Max wait for GPU in :auto mode
+    auto_timeout::Float64 = 300.0  # Max wait for GPU in :auto mode
     gpu_timeout::Float64 = Inf    # Max wait in :gpu mode
     on_wait::Union{Function,Nothing} = nothing  # Optional wait progress callback
 end
@@ -142,7 +142,7 @@ Main detection function. Applies DoG filtering, finds local maxima, extracts ROI
   - `:cpu` - Always use CPU
   - `:gpu` - Require GPU, wait for memory if needed (waits forever by default)
   - `:auto` - Try GPU with timeout, fall back to CPU if memory unavailable
-- `auto_timeout::Real` - Max seconds to wait for GPU in `:auto` mode (default: 30.0)
+- `auto_timeout::Real` - Max seconds to wait for GPU in `:auto` mode (default: 300.0)
 - `gpu_timeout::Real` - Max seconds to wait in `:gpu` mode (default: Inf)
 - `on_wait::Function` - Optional callback `(elapsed, available, required) -> nothing` for wait progress
 

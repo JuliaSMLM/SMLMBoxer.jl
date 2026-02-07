@@ -106,7 +106,7 @@ For expert users who want direct control over the DoG filter:
   - `:cpu` - Always use CPU
   - `:gpu` - Require GPU, wait for memory if needed
   - `:auto` - Try GPU with timeout, fall back to CPU if unavailable
-- `auto_timeout::Real`: Max seconds to wait for GPU in `:auto` mode (default: 30.0).
+- `auto_timeout::Real`: Max seconds to wait for GPU in `:auto` mode (default: 300.0).
 - `gpu_timeout::Real`: Max seconds to wait in `:gpu` mode (default: Inf).
 - `on_wait::Function`: Optional callback for wait progress reporting.
 
@@ -145,9 +145,9 @@ SMLMBoxer uses a unified GPU retry loop that handles multi-process contention on
 Memory is always reclaimed after GPU processing (both success and failure) so finished jobs don't block other processes waiting for GPU resources.
 
 ```julia
-# Wait up to 30s for GPU, fall back to CPU
+# Wait up to 5 min for GPU, fall back to CPU
 (roi_batch, info) = getboxes(imagestack, camera;
-    psf_sigma=0.13, backend=:auto, auto_timeout=30.0)
+    psf_sigma=0.13, backend=:auto, auto_timeout=300.0)
 
 # Monitor wait progress
 (roi_batch, info) = getboxes(imagestack, camera;

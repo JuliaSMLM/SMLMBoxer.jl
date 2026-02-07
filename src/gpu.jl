@@ -4,7 +4,7 @@ GPU utilities for SMLMBoxer.
 Provides backend selection and GPU memory waiting functionality following
 the JuliaSMLM convention:
 - backend: :cpu | :gpu | :auto
-- auto_timeout: seconds to wait in Auto mode (default 30.0)
+- auto_timeout: seconds to wait in Auto mode (default 300.0)
 - gpu_timeout: seconds to wait in GPU mode (default Inf)
 - on_wait: optional callback(elapsed, available, required)
 """
@@ -176,7 +176,7 @@ end
 
 """
     select_backend(backend::Symbol, required_bytes;
-                   auto_timeout=30.0, gpu_timeout=Inf, on_wait=nothing) -> (Symbol, Int)
+                   auto_timeout=300.0, gpu_timeout=Inf, on_wait=nothing) -> (Symbol, Int)
 
 Select compute backend with two-layer GPU contention handling.
 
@@ -190,7 +190,7 @@ occur during processing despite NVML pre-check, falls back to CPU.
 # Arguments
 - `backend`: :cpu, :gpu, or :auto
 - `required_bytes`: Estimated GPU memory needed for processing
-- `auto_timeout`: Max wait for :auto mode before CPU fallback (default 30.0)
+- `auto_timeout`: Max wait for :auto mode before CPU fallback (default 300.0)
 - `gpu_timeout`: Max wait for :gpu mode (default Inf - wait forever)
 - `on_wait`: Optional callback(elapsed, available, required)
 
@@ -203,7 +203,7 @@ occur during processing despite NVML pre-check, falls back to CPU.
 - `:auto` - NVML poll for device with timeout, falls back to (:cpu, -1) with warning
 """
 function select_backend(backend::Symbol, required_bytes::Integer;
-        auto_timeout::Real = 30.0,
+        auto_timeout::Real = 300.0,
         gpu_timeout::Real = Inf,
         on_wait = nothing)
 

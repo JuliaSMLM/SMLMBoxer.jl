@@ -128,7 +128,7 @@ GPU scheduling uses a single retry loop that handles all failure modes under mul
    - Retries on next available GPU
 
 4. **Timeout Behavior**:
-   - `:auto` mode: falls back to CPU after `auto_timeout` (default 30s)
+   - `:auto` mode: falls back to CPU after `auto_timeout` (default 300s)
    - `:gpu` mode: errors after `gpu_timeout` (default Inf)
 
 5. **Post-Processing Cleanup**: GPU memory pool is reclaimed after both successful and failed processing, so finished jobs release memory for other processes.

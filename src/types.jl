@@ -24,7 +24,7 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 
 ## Backend Parameters
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
-- `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback (default: 30.0)
+- `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback (default: 300.0)
 - `gpu_timeout::Float64`: Max wait for GPU in :gpu mode (default: Inf)
 - `on_wait::Union{Function,Nothing}`: Optional callback `(elapsed, available, required) -> nothing` for GPU wait progress (default: nothing)
 
@@ -56,7 +56,7 @@ Base.@kwdef struct BoxerConfig <: AbstractSMLMConfig
 
     # Backend parameters
     backend::Symbol = :auto
-    auto_timeout::Float64 = 30.0
+    auto_timeout::Float64 = 300.0
     gpu_timeout::Float64 = Inf
     on_wait::Union{Function,Nothing} = nothing
 end
@@ -223,7 +223,7 @@ When psf_sigma is provided:
 - `boxsize::Int`: ROI box size in pixels (default: 7)
 - `overlap::Real`: Maximum overlap between detections in pixels (default: 2.0)
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
-- `auto_timeout::Real`: Max wait seconds for :auto mode before CPU fallback (default: 30.0)
+- `auto_timeout::Real`: Max wait seconds for :auto mode before CPU fallback (default: 300.0)
 - `gpu_timeout::Real`: Max wait seconds for :gpu mode (default: Inf)
 - `on_wait`: Optional callback(elapsed, available, required) for wait progress
 """
@@ -253,7 +253,7 @@ mutable struct GetBoxesArgs
         sigma_large::Union{Real,Nothing} = nothing,
         minval::Union{Real,Nothing} = nothing,
         backend::Symbol = :auto,
-        auto_timeout::Real = 30.0,
+        auto_timeout::Real = 300.0,
         gpu_timeout::Real = Inf,
         on_wait::Union{Function,Nothing} = nothing
     )

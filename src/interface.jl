@@ -31,7 +31,7 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
   - `:cpu` - Always use CPU
   - `:gpu` - Require GPU, wait for memory if needed (waits forever by default)
   - `:auto` - Try GPU with timeout, fall back to CPU if memory unavailable
-- `auto_timeout::Real`: Max seconds to wait for GPU memory in `:auto` mode (default: 30.0).
+- `auto_timeout::Real`: Max seconds to wait for GPU memory in `:auto` mode (default: 300.0).
 - `gpu_timeout::Real`: Max seconds to wait for GPU memory in `:gpu` mode (default: Inf).
 - `on_wait::Function`: Optional callback `(elapsed, available, required) -> nothing` for wait progress.
 
@@ -159,7 +159,7 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
                   boxsize::Int=7,
                   overlap::Real=2.0,
                   backend::Symbol=:auto,
-                  auto_timeout::Real=30.0,
+                  auto_timeout::Real=300.0,
                   gpu_timeout::Real=Inf,
                   on_wait::Union{Function,Nothing}=nothing)
   # Build config from kwargs
