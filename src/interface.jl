@@ -288,6 +288,8 @@ function _getboxes_impl(args::GetBoxesArgs)
               CUDA.synchronize()
           catch e
               @warn "GPU processing failed, falling back to CPU" exception=e
+              GC.gc(false)
+              CUDA.reclaim()
               device_id = -1
               actual_backend = :cpu
               args.use_gpu = false
