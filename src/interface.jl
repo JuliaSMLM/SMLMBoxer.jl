@@ -292,6 +292,8 @@ function _getboxes_impl(args::GetBoxesArgs)
               coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
                   imagestack, args, kernelsize, max_free_mem; use_gpu=true)
               CUDA.synchronize()
+              GC.gc(false)
+              CUDA.reclaim()
               device_id = dev_id
               actual_backend = :gpu
               gpu_succeeded = true
