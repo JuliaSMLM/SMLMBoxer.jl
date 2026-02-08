@@ -115,9 +115,9 @@ Benchmarked on AMD Ryzen Threadripper PRO 5975WX / NVIDIA RTX A6000, 10 frames (
 
 | Image Size | Ideal CPU | Ideal GPU | sCMOS CPU | sCMOS GPU |
 |------------|----------:|----------:|----------:|----------:|
-| 128×128 | 441 | 4,164 | 31 | 2,481 |
-| 256×256 | 125 | 2,672 | 8 | 19 |
-| 512×512 | 34 | 443 | 2 | 19 |
+| 128×128 | 60 | 4,564 | 23 | 4,090 |
+| 256×256 | 15 | 3,752 | 6 | 2,557 |
+| 512×512 | 4 | 1,553 | 1 | 927 |
 
 Standard DoG uses NNlib/cuDNN; variance-weighted sCMOS uses KernelAbstractions custom kernels. Run `Pkg.test("SMLMBoxer")` locally to benchmark your hardware.
 
