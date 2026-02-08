@@ -198,8 +198,9 @@ Returns `(coords, batch_size, n_batches, memory_per_batch)`.
 """
 function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
                                  use_gpu::Bool, batch_cleanup::Union{Function,Nothing}=nothing)
-    # Memory multiplier: 6x for standard DoG, 10x for variance-weighted sCMOS
-    n_copies = args.camera isa SCMOSCamera ? 10 : 6
+    # Memory multiplier: 6x for standard DoG, 8x for variance-weighted sCMOS
+    # (sCMOS uses in-place DoG subtraction, saving one full-size copy)
+    n_copies = args.camera isa SCMOSCamera ? 8 : 6
     memory_required = sizeof(imagestack) * n_copies
 
     if memory_required <= max_free_mem

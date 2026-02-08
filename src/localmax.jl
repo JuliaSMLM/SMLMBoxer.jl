@@ -66,9 +66,12 @@ Find the coordinates of local maxima in an image.
 """
 function findlocalmax(imagestack::AbstractArray{<:Real}, kernelsize::Int; minval::Real=0.0f0, use_gpu=false)
     localmaximage = genlocalmaximage(imagestack, kernelsize; minval, use_gpu)
-    # Ensure CPU array for coordinate extraction (handles any edge cases)
-    localmaximage_cpu = localmaximage isa CuArray ? Array(localmaximage) : localmaximage
-    coords = maxima2coords(localmaximage_cpu)
+    if localmaximage isa CuArray
+        # GPU sparse extraction: transfers ~1 MB instead of full array (~1 GB)
+        coords = _gpu_maxima2coords(localmaximage)
+    else
+        coords = maxima2coords(localmaximage)
+    end
     return coords
 end
 

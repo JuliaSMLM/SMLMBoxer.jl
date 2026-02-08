@@ -267,12 +267,12 @@ Estimate GPU memory required for processing imagestack.
 Standard DoG path: 6x input size
 - Input, filtered_small, filtered_large, DoG result, localmax temps, GC margin
 
-Variance-weighted (SCMOSCamera): 10x input size
-- Additional workspace for per-pixel variance weighting
+Variance-weighted (SCMOSCamera): 8x input size
+- Additional workspace for per-pixel variance weighting (in-place DoG saves one copy)
 """
 function estimate_gpu_memory(imagestack::AbstractArray, camera)
     # Memory multiplier matches _getboxes_impl
-    n_copies = camera isa SCMOSCamera ? 10 : 6
+    n_copies = camera isa SCMOSCamera ? 8 : 6
     return sizeof(imagestack) * n_copies
 end
 
@@ -290,6 +290,6 @@ Estimate GPU memory required per frame.
 - Estimated bytes needed per frame for GPU processing
 """
 function estimate_gpu_memory_per_frame(height::Int, width::Int, camera)
-    n_copies = camera isa SCMOSCamera ? 10 : 6
+    n_copies = camera isa SCMOSCamera ? 8 : 6
     return height * width * sizeof(Float32) * n_copies
 end
