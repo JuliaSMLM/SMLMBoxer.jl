@@ -31,7 +31,7 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
   - `:cpu` - Always use CPU
   - `:gpu` - Require GPU, wait for memory if needed (waits forever by default)
   - `:auto` - Try GPU with timeout, fall back to CPU if memory unavailable
-- `auto_timeout::Real`: Max seconds to wait for GPU memory in `:auto` mode (default: 30.0).
+- `auto_timeout::Real`: Max seconds to wait for GPU memory in `:auto` mode (default: 300.0).
 - `gpu_timeout::Real`: Max seconds to wait for GPU memory in `:gpu` mode (default: Inf).
 - `on_wait::Function`: Optional callback `(elapsed, available, required) -> nothing` for wait progress.
 
@@ -125,7 +125,6 @@ for roi in roi_batch
 end
 ```
 """
-# Config-based calling convention (primary)
 function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}, config::BoxerConfig)
   # Convert to Float32 for type stability throughout pipeline
   imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
@@ -159,7 +158,7 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
                   boxsize::Int=7,
                   overlap::Real=2.0,
                   backend::Symbol=:auto,
-                  auto_timeout::Real=30.0,
+                  auto_timeout::Real=300.0,
                   gpu_timeout::Real=Inf,
                   on_wait::Union{Function,Nothing}=nothing)
   # Build config from kwargs
@@ -198,8 +197,9 @@ Returns `(coords, batch_size, n_batches, memory_per_batch)`.
 """
 function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
                                  use_gpu::Bool, batch_cleanup::Union{Function,Nothing}=nothing)
-    # Memory multiplier: 6x for standard DoG, 10x for variance-weighted sCMOS
-    n_copies = args.camera isa SCMOSCamera ? 10 : 6
+    # Memory multiplier: 6x for standard DoG, 8x for variance-weighted sCMOS
+    # (sCMOS uses in-place DoG subtraction, saving one full-size copy)
+    n_copies = args.camera isa SCMOSCamera ? 8 : 6
     memory_required = sizeof(imagestack) * n_copies
 
     if memory_required <= max_free_mem

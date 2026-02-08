@@ -137,10 +137,10 @@ function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
     filtered_large = convolve_variance_weighted(imagestack, variance_map,
                                                 Float32(sigma_large), args.use_gpu)
 
-    # Difference of Gaussians
-    filtered_stack = filtered_small .- filtered_large
+    # Difference of Gaussians (in-place to avoid allocating a third full-size array)
+    filtered_small .-= filtered_large
 
-    return filtered_stack
+    return filtered_small
 end
 
 """
@@ -197,6 +197,54 @@ Backend is selected automatically based on use_gpu parameter.
 end
 
 """
+    variance_weighted_gaussian_kernel_batched!(output, input, variance, sigma, winsize, nrows, ncols)
+
+Batched KernelAbstractions kernel for variance-weighted Gaussian convolution.
+Processes all frames in a single kernel launch via 3D ndrange=(nrows, ncols, nframes),
+eliminating per-frame launch overhead.
+
+# Arguments
+- `output`: Output array (nrows, ncols, 1, nframes)
+- `input`: Input array (nrows, ncols, 1, nframes)
+- `variance`: Variance map (nrows, ncols)
+- `sigma`: Gaussian sigma
+- `winsize`: Window size (pixels)
+- `nrows`: Number of rows (passed explicitly for bounds checking)
+- `ncols`: Number of columns
+"""
+@kernel function variance_weighted_gaussian_kernel_batched!(output, input, variance, sigma, winsize, nrows, ncols)
+    i, j, f = @index(Global, NTuple)
+
+    # Window bounds
+    row_start = max(1, i - winsize)
+    row_end = min(nrows, i + winsize)
+    col_start = max(1, j - winsize)
+    col_end = min(ncols, j + winsize)
+
+    # Accumulate variance-weighted sum
+    weightsum = zero(eltype(input))
+    varsum = zero(eltype(variance))
+
+    for ii in row_start:row_end
+        for jj in col_start:col_end
+            # Gaussian weight
+            dist_sq = Float32((ii-i)^2 + (jj-j)^2)
+            gauss_weight = exp(-dist_sq / (2 * sigma^2))
+
+            # Inverse variance weight
+            inv_var_weight = gauss_weight / variance[ii, jj]
+
+            # Accumulate
+            varsum += inv_var_weight
+            weightsum += inv_var_weight * input[ii, jj, 1, f]
+        end
+    end
+
+    # Normalized result
+    output[i, j, 1, f] = weightsum / varsum
+end
+
+"""
     convolve_variance_weighted(imagestack, variance_map, sigma, use_gpu)
 
 Apply variance-weighted Gaussian convolution using KernelAbstractions.
@@ -233,14 +281,10 @@ function convolve_variance_weighted(imagestack::AbstractArray{T},
         # Allocate output on GPU - stays on GPU like standard path
         filtered_gpu = CUDA.zeros(T, nrows, ncols, 1, nframes)
 
-        kernel! = variance_weighted_gaussian_kernel!(backend)
-
-        # Process all frames on GPU
-        for frame in 1:nframes
-            input_frame = @view imagestack_gpu[:, :, 1, frame]
-            output_frame = @view filtered_gpu[:, :, 1, frame]
-            kernel!(output_frame, input_frame, variance_gpu, sigma, winsize, ndrange=(nrows, ncols))
-        end
+        # Single batched kernel launch for all frames (eliminates per-frame launch overhead)
+        kernel! = variance_weighted_gaussian_kernel_batched!(backend)
+        kernel!(filtered_gpu, imagestack_gpu, variance_gpu, sigma, winsize, nrows, ncols,
+                ndrange=(nrows, ncols, nframes))
 
         KernelAbstractions.synchronize(backend)
         return filtered_gpu  # Stay on GPU - matches convolve() behavior
