@@ -41,7 +41,6 @@ imagestack → reshape → DoG filter → local maxima → overlap removal → b
 | `coords.jl` | Coordinate extraction (`maxima2coords`, `_gpu_maxima2coords`); `removeoverlap()` |
 | `boxes.jl` | ROI patch cutting (`getboxstack`, `fillbox!`); handles image boundary cases |
 | `gpu.jl` | NVML polling (context-free), CUDA memory waiting, backend selection, memory estimation |
-| `api.jl` | `SMLMBoxer.api()` loads `api_overview.md` |
 
 ### Two Filtering Paths
 
