@@ -73,7 +73,7 @@ function dog_kernel(sigma_small::Float32, sigma_large::Float32)
 end
 
 """
-    dog_filter(imagestack, args)
+    dog_filter(imagestack, args; use_gpu=args.use_gpu)
 
 Apply DoG filter to imagestack based on args.
 Uses variance-weighted filtering if sCMOS camera is provided.
@@ -81,11 +81,13 @@ Uses variance-weighted filtering if sCMOS camera is provided.
 # Arguments
 - `imagestack`: Input array of image data
 - `args`: Arguments with sigma values and camera
+- `use_gpu`: Filter on the GPU; the caller's backend decision, which overrides `args.use_gpu`
+  (a CPU fallback must not filter on the GPU)
 
 # Returns
 - `filtered_stack`: Filtered image stack
 """
-function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs)
+function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs; use_gpu::Bool = args.use_gpu)
 
     sigma_small = args.sigma_small
     sigma_large = args.sigma_large
@@ -93,18 +95,18 @@ function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs)
     # Check if we have an sCMOS camera with variance information
     if args.camera isa SCMOSCamera
         # Use variance-weighted DoG filtering (returns CPU array)
-        filtered_stack = dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args)
+        filtered_stack = dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args; use_gpu)
     else
         # Standard DoG filtering (may return CuArray if use_gpu=true)
         dog = dog_kernel(Float32(sigma_small), Float32(sigma_large))
-        filtered_stack = convolve(imagestack, dog, use_gpu = args.use_gpu)
+        filtered_stack = convolve(imagestack, dog; use_gpu)
     end
 
     return filtered_stack  # May be CuArray if use_gpu=true
 end
 
 """
-    dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args)
+    dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args; use_gpu=args.use_gpu)
 
 Apply variance-weighted DoG filter using sCMOS variance map.
 Implements SMITE-style inverse variance weighting during convolution.
@@ -114,6 +116,7 @@ Implements SMITE-style inverse variance weighting during convolution.
 - `sigma_small`: Sigma for small Gaussian
 - `sigma_large`: Sigma for large Gaussian
 - `args`: GetBoxesArgs with camera
+- `use_gpu`: Filter on the GPU (the caller's backend decision; defaults to `args.use_gpu`)
 
 # Returns
 - `filtered_stack`: Variance-weighted filtered image
@@ -122,7 +125,8 @@ function dog_filter_variance_weighted(
         imagestack::AbstractArray{<:Real},
         sigma_small::Real,
         sigma_large::Real,
-        args::GetBoxesArgs
+        args::GetBoxesArgs;
+        use_gpu::Bool = args.use_gpu
     )
     # Get image dimensions (rows, cols, 1, frames)
     nrows, ncols, _, nframes = size(imagestack)
@@ -134,13 +138,13 @@ function dog_filter_variance_weighted(
     # Apply small Gaussian with variance weighting
     filtered_small = convolve_variance_weighted(
         imagestack, variance_map,
-        Float32(sigma_small), args.use_gpu
+        Float32(sigma_small), use_gpu
     )
 
     # Apply large Gaussian with variance weighting
     filtered_large = convolve_variance_weighted(
         imagestack, variance_map,
-        Float32(sigma_large), args.use_gpu
+        Float32(sigma_large), use_gpu
     )
 
     # Difference of Gaussians (in-place to avoid allocating a third full-size array)

@@ -1,273 +1,72 @@
-"""
-Local GPU wait/timeout test for SMLMBoxer.
+# Backend selection and the GPU wait/fallback contract (getboxes docstring):
+#   :cpu  never touches the GPU;
+#   :gpu  runs on a GPU, or errors once gpu_timeout passes without one;
+#   :auto runs on a GPU when one has room, else waits up to auto_timeout (calling on_wait
+#         each poll) and then falls back to the CPU.
+# The unavailable-GPU cases fill every device with a blocker, leaving less free memory than
+# one frame needs, so the fallback is forced rather than hoped for.
+using Test, SMLMBoxer, SMLMData, CUDA
 
-Tests the backend selection and GPU memory waiting functionality.
-GPU group: needs a functional CUDA device; runs on a lab machine.
-"""
+img = rand(Float32, 128, 128, 10)
+camera = IdealCamera(1:129, 1:129, 0.1f0)
+kw = (sigma_small = 1.5, sigma_large = 3.0, minval = 0.1)
 
-using SMLMBoxer
-using SMLMData
-using CUDA
-using Test
+@testset "GPU available" begin
+    (roi_cpu, info_cpu) = getboxes(img, camera; backend = :cpu, kw...)
+    @test info_cpu.backend == :cpu
+    @test info_cpu.device_id == -1
 
-"""
-    run_gpu_wait_tests()
+    (roi_auto, info_auto) = getboxes(img, camera; backend = :auto, auto_timeout = 60.0, kw...)
+    @test info_auto.backend == :gpu
+    @test info_auto.device_id >= 0
+    @test length(roi_auto) == length(roi_cpu)
 
-Run tests for GPU wait/timeout functionality.
-Returns true if all tests pass.
-"""
-function run_gpu_wait_tests()
-    println("\nRunning GPU wait/timeout tests...")
-    println("-"^50)
-
-    # Test data
-    img = rand(Float32, 128, 128, 10)
-    camera = IdealCamera(1:129, 1:129, 0.1f0)
-
-    all_passed = true
-
-    # Test 1: backend=:cpu should always use CPU
-    println("\n[1/6] Testing backend=:cpu...")
-    try
-        (result, info) = getboxes(
-            img, camera;
-            backend = :cpu,
-            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
-        )
-        println("      Passed: $(length(result)) ROIs detected on CPU (backend=$(info.backend))")
-    catch e
-        println("      FAILED: $e")
-        all_passed = false
-    end
-
-    # Test 2: backend=:auto should work (GPU or CPU fallback)
-    println("\n[2/6] Testing backend=:auto...")
-    try
-        (result, info) = getboxes(
-            img, camera;
-            backend = :auto,
-            auto_timeout = 5.0,
-            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
-        )
-        println("      Passed: $(length(result)) ROIs detected (backend=$(info.backend))")
-    catch e
-        println("      FAILED: $e")
-        all_passed = false
-    end
-
-    # Test 3: backend=:auto with very short timeout should fall back to CPU
-    println("\n[3/6] Testing backend=:auto with 0.001s timeout (should fallback to CPU)...")
-    try
-        # Use large image to increase memory requirement
-        large_img = rand(Float32, 512, 512, 50)
-        large_camera = IdealCamera(1:513, 1:513, 0.1f0)
-
-        # With impossibly short timeout, should either:
-        # a) Fall back to CPU with warning (if GPU memory check takes time)
-        # b) Still use GPU (if memory was immediately available)
-        (result, info) = getboxes(
-            large_img, large_camera;
-            backend = :auto,
-            auto_timeout = 0.001,  # Impossibly short
-            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
-        )
-        println("      Passed: $(length(result)) ROIs (backend=$(info.backend))")
-    catch e
-        println("      Note: $e")
-        all_passed = false
-    end
-
-    # Test 4: on_wait callback should be called when waiting
-    println("\n[4/6] Testing on_wait callback...")
-    wait_count = Ref(0)
-    wait_elapsed = Ref(0.0)
-    on_wait_cb = (elapsed, avail, req) -> begin
-        wait_count[] += 1
-        wait_elapsed[] = elapsed
-    end
-
-    try
-        (result, info) = getboxes(
-            img, camera;
-            backend = :auto,
-            auto_timeout = 2.0,
-            on_wait = on_wait_cb,
-            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
-        )
-        if wait_count[] > 0
-            println("      Passed: Callback called $(wait_count[]) times, last elapsed=$(round(wait_elapsed[], digits = 2))s")
-        else
-            println("      Note: Callback not called (GPU memory immediately available)")
-        end
-    catch e
-        println("      FAILED: $e")
-        all_passed = false
-    end
-
-    # Test 5: backend=:gpu with functional CUDA should work
-    if CUDA.functional()
-        println("\n[5/6] Testing backend=:gpu (GPU required)...")
-        try
-            (result, info) = getboxes(
-                img, camera;
-                backend = :gpu,
-                gpu_timeout = 10.0,
-                sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
-            )
-            println("      Passed: $(length(result)) ROIs detected on GPU (device=$(info.device_id))")
-        catch e
-            println("      FAILED: $e")
-            all_passed = false
-        end
-    else
-        println("\n[5/6] Skipping backend=:gpu test (no CUDA)")
-    end
-
-    # Test 6: Explicit backend=:cpu
-    println("\n[6/6] Testing explicit backend=:cpu...")
-    try
-        (result, info) = getboxes(
-            img, camera;
-            backend = :cpu,
-            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
-        )
-        @assert info.backend == :cpu "Expected :cpu backend"
-        println("      Passed: $(length(result)) ROIs detected (backend=$(info.backend))")
-    catch e
-        println("      FAILED: $e")
-        all_passed = false
-    end
-
-    println("\n" * "-"^50)
-    if all_passed
-        println("All GPU wait tests passed!")
-    else
-        println("Some tests failed - see above")
-    end
-
-    return all_passed
+    (roi_gpu, info_gpu) = getboxes(img, camera; backend = :gpu, gpu_timeout = 60.0, kw...)
+    @test info_gpu.backend == :gpu
+    @test info_gpu.device_id >= 0
+    @test length(roi_gpu) == length(roi_cpu)
 end
 
-"""
-    test_memory_pressure_wait()
+@testset "GPU unavailable" begin
+    # One 4096x4096 frame needs ~400 MB (~600 MB with the 1.5x margin); leave ~200 MB free.
+    big = rand(Float32, 4096, 4096, 1)
+    big_camera = IdealCamera(1:4097, 1:4097, 0.1f0)
+    need = SMLMBoxer.estimate_gpu_memory_per_frame(4096, 4096, big_camera)
+    leave = 200_000_000
 
-Test waiting behavior under simulated memory pressure.
-Allocates GPU memory to force waiting, then releases it.
-
-Returns true if test passes.
-"""
-function test_memory_pressure_wait()
-    if !CUDA.functional()
-        println("Skipping memory pressure test (no CUDA)")
-        return true
-    end
-
-    println("\nTesting wait behavior under memory pressure...")
-    println("-"^50)
-
-    # Get current free memory
-    free_mem = CUDA.free_memory()
-    println("Initial free GPU memory: $(round(free_mem / 1.0e9, digits = 2)) GB")
-
-    # Calculate how much to allocate to leave only ~500MB free
-    target_free = 500_000_000  # 500MB
-    alloc_size = max(0, free_mem - target_free)
-
-    if alloc_size < 1_000_000_000  # Need at least 1GB to allocate
-        println("Not enough GPU memory to test pressure scenario")
-        return true
-    end
-
-    # Allocate blocker array
-    n_floats = alloc_size ÷ sizeof(Float32)
-    println("Allocating blocker: $(round(alloc_size / 1.0e9, digits = 2)) GB...")
-
-    blocker = nothing
-    wait_triggered = Ref(false)
-
+    blockers = CuArray{UInt8}[]
     try
-        blocker = CUDA.zeros(Float32, n_floats)
-        CUDA.synchronize()
-
-        new_free = CUDA.free_memory()
-        println("Free memory after blocker: $(round(new_free / 1.0e9, digits = 2)) GB")
-
-        # Test data - use larger image to require more GPU memory
-        # With 6x multiplier, 256x256x50 needs ~256*256*50*4*6 = ~384MB
-        img = rand(Float32, 256, 256, 50)
-        camera = IdealCamera(1:257, 1:257, 0.1f0)
-
-        mem_estimate = 256 * 256 * 50 * 4 * 6
-        println("Estimated memory needed: $(round(mem_estimate / 1.0e6, digits = 1)) MB")
-
-        # This should either wait or fall back to CPU
-        on_wait_cb = (elapsed, avail, req) -> begin
-            wait_triggered[] = true
-            println(
-                "  Wait callback: elapsed=$(round(elapsed, digits = 2))s, " *
-                    "avail=$(round(avail / 1.0e6, digits = 1))MB, req=$(round(req / 1.0e6, digits = 1))MB"
-            )
+        for dev in CUDA.devices()
+            CUDA.device!(dev)
+            push!(blockers, CUDA.zeros(UInt8, max(0, CUDA.free_memory() - leave)))
+            CUDA.synchronize()
         end
+        # Precondition: no device has room for one frame, as NVML (the poll) sees it.
+        maxfree = maximum(
+            CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(length(CUDA.devices()) - 1)
+        )
+        @test maxfree < 1.5 * need
 
-        println("\nRunning getboxes with memory pressure...")
-        try
-            (result, info) = getboxes(
-                img, camera;
-                backend = :auto,
-                auto_timeout = 3.0,
-                on_wait = on_wait_cb,
-                sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
-            )
-
-            println("Result: $(length(result)) ROIs (backend=$(info.backend))")
-
-            if wait_triggered[]
-                println("Wait callback WAS triggered - waiting behavior verified!")
-            else
-                println("Wait callback not triggered - GPU had enough memory even under pressure")
-                println("(This is expected if free memory > estimated requirement with 1.5x margin)")
-            end
-        catch e
-            if occursin("Out of GPU memory", string(e)) || occursin("OutOfMemory", string(e))
-                println("GPU OOM during actual operation (cuDNN workspace allocation)")
-                println("This is expected - our memory check passed but cuDNN needs extra workspace")
-                println("In production, :auto mode would fall back to CPU on timeout")
-                # This is actually a valid test outcome - it shows the GPU was attempted
-            else
-                rethrow(e)
-            end
+        waits = Ref(0)
+        on_wait = (elapsed, available, required) -> begin
+            waits[] += 1
+            @test available < 1.5 * required
+            return nothing
         end
+        (roi, info) = @test_logs (:warn, r"GPU unavailable") match_mode = :any getboxes(
+            big, big_camera; backend = :auto, auto_timeout = 2.0, on_wait = on_wait, kw...
+        )
+        @test info.backend == :cpu
+        @test info.device_id == -1
+        @test waits[] >= 1
 
-        return true
-
-    catch outer_e
-        # Handle any other errors - GPU OOM is expected under memory pressure
-        err_str = string(outer_e)
-        if occursin("Out of GPU memory", err_str) ||
-                occursin("OutOfMemory", err_str) ||
-                occursin("OutOfGPUMemoryError", err_str) ||
-                outer_e isa CUDA.OutOfGPUMemoryError
-            println("GPU OOM during operation - this is expected under memory pressure")
-            println("(cuDNN workspace allocation requires more than our estimate)")
-            return true
-        else
-            println("Unexpected error: $outer_e")
-            return false
-        end
-
+        @test_throws ErrorException getboxes(big, big_camera; backend = :gpu, gpu_timeout = 2.0, kw...)
     finally
-        # Release blocker
-        if blocker !== nothing
-            blocker = nothing
-            GC.gc()
+        empty!(blockers)
+        GC.gc()
+        for dev in CUDA.devices()
+            CUDA.device!(dev)
             CUDA.reclaim()
-            println("\nBlocker released. Free memory: $(round(CUDA.free_memory() / 1.0e9, digits = 2)) GB")
         end
     end
-end
-
-@testset "GPU wait/timeout" begin
-    @test run_gpu_wait_tests() == true
-    # Memory pressure (may not trigger on high-memory GPUs)
-    @test test_memory_pressure_wait() == true
 end

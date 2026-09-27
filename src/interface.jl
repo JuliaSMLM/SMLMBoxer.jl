@@ -208,7 +208,7 @@ function _process_with_batching(
 
     if memory_required <= max_free_mem
         # Single batch: process whole stack
-        filtered_stack = dog_filter(imagestack, args)
+        filtered_stack = dog_filter(imagestack, args; use_gpu)
         coords = findlocalmax(filtered_stack, kernelsize; minval = args.minval, use_gpu = use_gpu)
         batch_size = size(imagestack, 4)
         n_batches = 1
@@ -227,7 +227,7 @@ function _process_with_batching(
             start_idx = (i - 1) * batch_size + 1
             end_idx = min(i * batch_size, n_images)
             batch = imagestack[:, :, :, start_idx:end_idx]
-            filtered_batch = dog_filter(batch, args)
+            filtered_batch = dog_filter(batch, args; use_gpu)
             coords_batch = findlocalmax(filtered_batch, kernelsize; minval = args.minval, use_gpu = use_gpu)
 
             # Offset frame indices to actual frame numbers
