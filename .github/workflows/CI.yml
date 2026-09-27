@@ -1,67 +1,30 @@
+# Lab CI caller (admiral decision 0011). Copy to .github/workflows/CI.yml unchanged except the
+# `with:` lines; the rest is checked by hash. The jobs live in LidkeLab/.github.
 name: CI
+
 on:
   push:
-    branches:
-      - main
+    branches: [main, master]
     tags: ['*']
+    paths-ignore: ['**.md', 'dev/**', '.claude/**']
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore: ['**.md', 'dev/**', '.claude/**']
+  workflow_dispatch:
+  schedule:
+    - cron: '23 5 1 * *'  # monthly
+
 concurrency:
-  # Skip intermediate builds: always.
-  # Cancel intermediate builds: only if it is a pull request build.
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  actions: write  # the cache step deletes the caches it replaces
+  contents: read
+
 jobs:
-  test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        version:
-          - '1.10'
-          - '1'
-          - 'nightly'
-        os:
-          - ubuntu-latest
-        arch:
-          - x64
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v2
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
-        with:
-          files: lcov.info
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      statuses: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1'
-      - name: Configure doc environment
-        run: |
-          julia --project=docs/ -e '
-            using Pkg
-            Pkg.develop(PackageSpec(path=pwd()))
-            Pkg.instantiate()'
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-docdeploy@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: |
-          julia --project=docs -e '
-            using Documenter: DocMeta, doctest
-            using SMLMBoxer
-            DocMeta.setdocmeta!(SMLMBoxer, :DocTestSetup, :(using SMLMBoxer); recursive=true)
-            doctest(SMLMBoxer)'
+  ci:
+    uses: LidkeLab/.github/.github/workflows/julia-ci.yml@v2
+    with:
+      registered: true
+      runic: true

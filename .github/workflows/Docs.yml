@@ -1,0 +1,37 @@
+# The documentation build, split out of CI.yml when CI moved to the lab's shared workflow.
+# Admiral decisions 0011 and 0018: the site is built and published at release tags and on
+# manual dispatch only; the strict build runs locally before each release.
+name: Docs
+on:
+  push:
+    tags: ['*']
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
+      contents: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - name: Configure doc environment
+        # docs/Project.toml points at the package through [sources], so no develop step.
+        shell: julia --project=docs --color=yes {0}
+        run: |
+          using Pkg
+          Pkg.instantiate()
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-docdeploy@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}

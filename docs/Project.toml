@@ -1,3 +1,9 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 SMLMBoxer = "a7d3b33b-b840-4f8e-b556-99be03134090"
+
+[sources]
+SMLMBoxer = {path = ".."}
+
+[compat]
+Documenter = "1"
