@@ -4,7 +4,7 @@ using Test, SMLMBoxer, SMLMData
 
 img_size = 50
 boxsize = 11
-peaks = [(r, c) for r in (5, 25, 45) for c in (5, 25, 45)]  # corners, edge centers, center
+peaks = [(r, c) for r in (5, 25, 46) for c in (5, 25, 46)]  # both clamps, edge centers, center
 
 image = zeros(Float32, img_size, img_size)
 for (r, c) in peaks

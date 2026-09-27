@@ -3,8 +3,9 @@
 #   :gpu  runs on a GPU, or errors once gpu_timeout passes without one;
 #   :auto runs on a GPU when one has room, else waits up to auto_timeout (calling on_wait
 #         each poll) and then falls back to the CPU.
-# The unavailable-GPU cases fill every device with a blocker, leaving less free memory than
-# one frame needs, so the fallback is forced rather than hoped for.
+# auto_timeout = 0 forces the fallback without waiting. The unavailable-GPU cases fill every
+# device with a blocker, leaving less free memory than one frame needs, so waiting and the
+# fallback are forced rather than hoped for.
 using Test, SMLMBoxer, SMLMData, CUDA
 
 img = rand(Float32, 128, 128, 10)
@@ -25,6 +26,23 @@ kw = (sigma_small = 1.5, sigma_large = 3.0, minval = 0.1)
     @test info_gpu.backend == :gpu
     @test info_gpu.device_id >= 0
     @test length(roi_gpu) == length(roi_cpu)
+end
+
+@testset "Forced fallback (auto_timeout = 0)" begin
+    # No waiting, so no on_wait call is required; the fallback must filter on the CPU
+    # (no GPU allocation) and give the same boxes as backend = :cpu. Both filter paths.
+    scmos = SCMOSCamera(128, 128, 0.1f0, 5.0f0, offset = 100.0f0, gain = 2.0f0, qe = 0.9f0)
+    for cam in (camera, scmos)
+        (roi_cpu, _) = getboxes(img, cam; backend = :cpu, kw...)
+        getboxes(img, cam; backend = :auto, auto_timeout = 0.0, kw...)  # compile first
+        local roi, info
+        gpu_bytes = CUDA.@allocated begin
+            (roi, info) = getboxes(img, cam; backend = :auto, auto_timeout = 0.0, kw...)
+        end
+        @test info.backend == :cpu
+        @test gpu_bytes == 0
+        @test roi.x_corners == roi_cpu.x_corners && roi.y_corners == roi_cpu.y_corners
+    end
 end
 
 @testset "GPU unavailable" begin
@@ -59,6 +77,8 @@ end
         @test info.backend == :cpu
         @test info.device_id == -1
         @test waits[] >= 1
+        (roi_cpu, _) = getboxes(big, big_camera; backend = :cpu, kw...)
+        @test roi.x_corners == roi_cpu.x_corners && roi.y_corners == roi_cpu.y_corners
 
         @test_throws ErrorException getboxes(big, big_camera; backend = :gpu, gpu_timeout = 2.0, kw...)
     finally
