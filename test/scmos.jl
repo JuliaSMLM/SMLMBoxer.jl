@@ -19,13 +19,14 @@ using Test, SMLMBoxer, SMLMData
         qe = 0.9f0
     )
 
-    (roi_batch, info) = getboxes(image, camera;
-        boxsize=5,
-        overlap=3.0,
-        sigma_small=1.0,
-        sigma_large=2.0,
-        minval=0.1,
-        backend=:cpu
+    (roi_batch, info) = getboxes(
+        image, camera;
+        boxsize = 5,
+        overlap = 3.0,
+        sigma_small = 1.0,
+        sigma_large = 2.0,
+        minval = 0.1,
+        backend = :cpu
     )
 
     # Should detect the peak
@@ -117,13 +118,14 @@ end
         qe = 0.9f0
     )
 
-    (roi_batch, info) = getboxes(image, camera;
-        boxsize=7,
-        overlap=3.0,
-        sigma_small=1.0,
-        sigma_large=2.0,
-        minval=0.5,  # Threshold to potentially reject noisy spot
-        backend=:cpu
+    (roi_batch, info) = getboxes(
+        image, camera;
+        boxsize = 7,
+        overlap = 3.0,
+        sigma_small = 1.0,
+        sigma_large = 2.0,
+        minval = 0.5,  # Threshold to potentially reject noisy spot
+        backend = :cpu
     )
 
     # With variance weighting, the low-noise spot should be detected

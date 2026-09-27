@@ -12,9 +12,11 @@ for (r, c) in peaks
 end
 camera = IdealCamera(1:(img_size + 1), 1:(img_size + 1), 0.1f0)
 
-(roi_batch, _) = getboxes(image, camera;
+(roi_batch, _) = getboxes(
+    image, camera;
     sigma_small = 1.0, sigma_large = 2.0, minval = 10.0,
-    boxsize = boxsize, overlap = 0.5, backend = :cpu)
+    boxsize = boxsize, overlap = 0.5, backend = :cpu
+)
 
 @test length(roi_batch) == length(peaks)
 

@@ -43,19 +43,21 @@ for i in 1:n_emitters_per_axis
         photons = 1000.0 + 500.0 * rand()  # 1000-1500 photons
         bg = 10.0  # background photons/pixel
 
-        push!(emitters, Emitter2DFit{Float64}(
-            x, y,           # position (μm)
-            photons, bg,    # photons and background
-            0.0, 0.0,       # uncertainties (not used for simulation)
-            0.0, 0.0,       # uncertainties
-            1,              # frame
-            1, 0, length(emitters)+1  # dataset, track_id, id
-        ))
+        push!(
+            emitters, Emitter2DFit{Float64}(
+                x, y,           # position (μm)
+                photons, bg,    # photons and background
+                0.0, 0.0,       # uncertainties (not used for simulation)
+                0.0, 0.0,       # uncertainties
+                1,              # frame
+                1, 0, length(emitters) + 1  # dataset, track_id, id
+            )
+        )
     end
 end
 
 println("  Created $(length(emitters)) emitters in grid pattern")
-println("  Spacing: $(round(spacing, digits=3)) μm")
+println("  Spacing: $(round(spacing, digits = 3)) μm")
 println()
 
 # ============================================================================
@@ -83,14 +85,14 @@ println("  PSF: Gaussian with σ = 0.13 μm")
 
 # Generate clean image (no noise)
 println("  Generating clean image...")
-img_clean = Float32.(gen_images(smld, psf, bg=10.0))
+img_clean = Float32.(gen_images(smld, psf, bg = 10.0))
 
 # Generate noisy image (Poisson + readnoise)
 println("  Generating noisy image (Poisson + readnoise)...")
-img_noisy = Float32.(gen_images(smld, psf, poisson_noise=true, bg=10.0))
+img_noisy = Float32.(gen_images(smld, psf, poisson_noise = true, bg = 10.0))
 
 println("  Image size: $(size(img_noisy))")
-println("  Signal range: [$(round(minimum(img_noisy), digits=1)), $(round(maximum(img_noisy), digits=1))] ADU")
+println("  Signal range: [$(round(minimum(img_noisy), digits = 1)), $(round(maximum(img_noisy), digits = 1))] ADU")
 println()
 
 # ============================================================================
@@ -100,13 +102,14 @@ println("Step 4: Detecting spots with SMLMBoxer (PSF-aware interface)...")
 
 # Calculate PSF sigma in pixels
 psf_sigma_pixels = 0.13f0 / pixel_size  # 0.13 μm / 0.1 μm/pixel = 1.3 pixels
-println("  PSF sigma: $(round(psf_sigma_pixels, digits=2)) pixels")
+println("  PSF sigma: $(round(psf_sigma_pixels, digits = 2)) pixels")
 println("  Detection threshold: 500 photons")
 println()
 
 # Detect on clean image (CPU)
 println("  Running on clean image (CPU)...")
-(roi_batch_clean, info_clean) = getboxes(img_clean, camera;
+(roi_batch_clean, info_clean) = getboxes(
+    img_clean, camera;
     psf_sigma = psf_sigma_pixels,  # PSF-aware detection
     min_photons = 500.0,            # Detect emitters with ≥500 photons
     boxsize = 11,                   # Larger box for better fitting
@@ -117,7 +120,8 @@ t_clean = info_clean.elapsed_s
 
 # Detect on noisy image (CPU)
 println("  Running on noisy image (CPU)...")
-(roi_batch_noisy, info_noisy) = getboxes(img_noisy, camera;
+(roi_batch_noisy, info_noisy) = getboxes(
+    img_noisy, camera;
     psf_sigma = psf_sigma_pixels,
     min_photons = 500.0,
     boxsize = 11,
@@ -129,7 +133,8 @@ t_noisy = info_noisy.elapsed_s
 # Try GPU if available
 if CUDA.functional()
     println("  Running on noisy image (GPU)...")
-    (roi_batch_gpu, info_gpu) = getboxes(img_noisy, camera;
+    (roi_batch_gpu, info_gpu) = getboxes(
+        img_noisy, camera;
         psf_sigma = psf_sigma_pixels,
         min_photons = 500.0,
         boxsize = 11,

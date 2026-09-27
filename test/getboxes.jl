@@ -9,13 +9,14 @@ using Test, SMLMBoxer, SMLMData
     image[30, 60] = 10
 
     # Get boxes without camera (positional interface)
-    (roi_batch, info) = getboxes(image;
-        boxsize=5,
-        overlap=3.0,
-        sigma_small=1.0,
-        sigma_large=2.0,
-        minval=0.1,
-        backend=:cpu
+    (roi_batch, info) = getboxes(
+        image;
+        boxsize = 5,
+        overlap = 3.0,
+        sigma_small = 1.0,
+        sigma_large = 2.0,
+        minval = 0.1,
+        backend = :cpu
     )
 
     # Test ROIBatch structure
@@ -55,13 +56,14 @@ end
     image[20, 50] = 20
     image[21, 51] = 10
 
-    (roi_batch, info) = getboxes(image;
-        boxsize=5,
-        overlap=3.0,
-        sigma_small=1.0,
-        sigma_large=2.0,
-        minval=0.1,
-        backend=:cpu
+    (roi_batch, info) = getboxes(
+        image;
+        boxsize = 5,
+        overlap = 3.0,
+        sigma_small = 1.0,
+        sigma_large = 2.0,
+        minval = 0.1,
+        backend = :cpu
     )
 
     # Should detect only one peak (overlap removed)
@@ -94,13 +96,14 @@ end
     )
 
     # Get boxes with camera
-    (roi_batch, info) = getboxes(image, camera;
-        boxsize=5,
-        overlap=3.0,
-        sigma_small=1.0,
-        sigma_large=2.0,
-        minval=0.1,
-        backend=:cpu
+    (roi_batch, info) = getboxes(
+        image, camera;
+        boxsize = 5,
+        overlap = 3.0,
+        sigma_small = 1.0,
+        sigma_large = 2.0,
+        minval = 0.1,
+        backend = :cpu
     )
 
     # Should detect two peaks
@@ -141,7 +144,8 @@ end
 
     # Use PSF-aware interface with physical units (microns)
     psf_sigma_microns = 0.13f0  # 130nm PSF
-    (roi_batch, info) = getboxes(image, camera;
+    (roi_batch, info) = getboxes(
+        image, camera;
         psf_sigma = psf_sigma_microns,  # In microns (auto-converts to pixels)
         min_photons = 500.0,             # Should detect our 1000 photon peak
         boxsize = 11,
@@ -162,7 +166,8 @@ end
     @test info.elapsed_s > 0
 
     # Test with higher threshold - should not detect
-    (roi_batch_high, _) = getboxes(image, camera;
+    (roi_batch_high, _) = getboxes(
+        image, camera;
         psf_sigma = psf_sigma_microns,
         min_photons = 5000.0,  # Way above our peak
         boxsize = 11,
@@ -178,7 +183,7 @@ end
     camera = IdealCamera(1:101, 1:101, 0.1f0)
 
     # PSF-aware config
-    config_psf = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
+    config_psf = BoxerConfig(psf_sigma = 0.13, min_photons = 500.0, boxsize = 11)
     @test config_psf isa BoxerConfig
     @test config_psf.psf_sigma == 0.13
     @test config_psf.boxsize == 11
@@ -188,7 +193,7 @@ end
     @test info isa BoxesInfo
 
     # Advanced config (sigma_small/sigma_large)
-    config_adv = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=0.1, boxsize=7, backend=:cpu)
+    config_adv = BoxerConfig(sigma_small = 1.5, sigma_large = 3.0, minval = 0.1, boxsize = 7, backend = :cpu)
     @test config_adv.psf_sigma === nothing
     @test config_adv.sigma_small == 1.5
     @test config_adv.backend == :cpu
@@ -200,7 +205,9 @@ end
     @test info2.backend == :cpu
 
     # Kwargs should produce same result as config
-    (roi_batch3, info3) = getboxes(image2;
-        sigma_small=1.5, sigma_large=3.0, minval=0.1, boxsize=7, backend=:cpu)
+    (roi_batch3, info3) = getboxes(
+        image2;
+        sigma_small = 1.5, sigma_large = 3.0, minval = 0.1, boxsize = 7, backend = :cpu
+    )
     @test length(roi_batch2) == length(roi_batch3)
 end

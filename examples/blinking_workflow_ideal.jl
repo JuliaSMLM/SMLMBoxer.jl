@@ -55,7 +55,7 @@ sim_params = StaticSMLMParams(
 )
 
 # Pattern: Octamer (8-mer with 150nm diameter)
-pattern = Nmer2D(n=8, d=0.15)
+pattern = Nmer2D(n = 8, d = 0.15)
 
 # Fluorophore with blinking dynamics
 molecule = GenericFluor(
@@ -89,16 +89,16 @@ println("Step 3: Simulating blinking SMLM data...")
 
 # Run simulation (returns pattern, smld_true, smld_noisy)
 t_start = time()
-_, _, smld_ground_truth = simulate(sim_params; pattern=pattern, molecule=molecule, camera=camera)
+_, _, smld_ground_truth = simulate(sim_params; pattern = pattern, molecule = molecule, camera = camera)
 t_sim = time() - t_start
 
 n_emitters = length(smld_ground_truth.emitters)
 n_patterns = sim_params.density * (n_pixels * pixel_size)^2
 
-println("  Simulation complete ($(round(t_sim, digits=2))s)")
+println("  Simulation complete ($(round(t_sim, digits = 2))s)")
 println("  Ground truth patterns: $(round(Int, n_patterns))")
 println("  Total ground truth emitters: $n_emitters")
-println("  Emitters per frame (avg): $(round(n_emitters / sim_params.nframes, digits=1))")
+println("  Emitters per frame (avg): $(round(n_emitters / sim_params.nframes, digits = 1))")
 println()
 
 # Analyze blinking statistics
@@ -118,16 +118,17 @@ psf = GaussianPSF(Float32(sim_params.σ_psf))
 
 # Generate images with Poisson noise and background
 t_start = time()
-images = gen_images(smld_ground_truth, psf;
+images = gen_images(
+    smld_ground_truth, psf;
     bg = 10.0,              # 10 photons/pixel background
     poisson_noise = true    # Add Poisson noise
 )
 t_gen = time() - t_start
 
-println("  Image generation complete ($(round(t_gen, digits=2))s)")
+println("  Image generation complete ($(round(t_gen, digits = 2))s)")
 println("  Image stack: $(size(images))")
 println("  Data type: $(eltype(images))")
-println("  Value range: [$(round(minimum(images), digits=1)), $(round(maximum(images), digits=1))] photons")
+println("  Value range: [$(round(minimum(images), digits = 1)), $(round(maximum(images), digits = 1))] photons")
 println()
 
 # ============================================================================
@@ -135,12 +136,13 @@ println()
 # ============================================================================
 println("Step 5: Detecting spots with PSF-aware interface (physical units)...")
 
-println("  PSF sigma: $(sim_params.σ_psf) μm (= $(round(sim_params.σ_psf / pixel_size, digits=2)) pixels)")
+println("  PSF sigma: $(sim_params.σ_psf) μm (= $(round(sim_params.σ_psf / pixel_size, digits = 2)) pixels)")
 println("  Detection threshold: 50 photons (matched to framerate)")
 println()
 
 # Detect using PSF-aware interface with physical units
-(roi_batch, info) = getboxes(images, camera;
+(roi_batch, info) = getboxes(
+    images, camera;
     psf_sigma = sim_params.σ_psf,  # PSF sigma in microns (auto-converts to pixels)
     min_photons = 50.0,             # Photon threshold (auto-converts to intensity)
     boxsize = 11,                   # 11×11 pixel ROIs
@@ -151,9 +153,9 @@ t_detect = info.elapsed_s
 
 n_detected = length(roi_batch)
 
-println("  Detection complete ($(round(t_detect * 1000, digits=1)) ms)")
+println("  Detection complete ($(round(t_detect * 1000, digits = 1)) ms)")
 println("  Detected ROIs: $n_detected")
-println("  Detection rate: $(round(n_detected / n_emitters * 100, digits=1))%")
+println("  Detection rate: $(round(n_detected / n_emitters * 100, digits = 1))%")
 println()
 
 # ============================================================================
@@ -188,10 +190,10 @@ println("  Per-frame analysis:")
 println("    Frames with ground truth: $(length(gt_per_frame))")
 println("    Frames with detections: $(length(det_per_frame))")
 if !isempty(detection_rates)
-    println("    Mean detection rate: $(round(mean(detection_rates) * 100, digits=1))%")
-    println("    Std detection rate: $(round(std(detection_rates) * 100, digits=1))%")
-    println("    Min detection rate: $(round(minimum(detection_rates) * 100, digits=1))%")
-    println("    Max detection rate: $(round(maximum(detection_rates) * 100, digits=1))%")
+    println("    Mean detection rate: $(round(mean(detection_rates) * 100, digits = 1))%")
+    println("    Std detection rate: $(round(std(detection_rates) * 100, digits = 1))%")
+    println("    Min detection rate: $(round(minimum(detection_rates) * 100, digits = 1))%")
+    println("    Max detection rate: $(round(maximum(detection_rates) * 100, digits = 1))%")
 end
 println()
 
@@ -207,24 +209,24 @@ println("Simulation:")
 println("  Patterns: $(round(Int, n_patterns))")
 println("  Ground truth emitters: $n_emitters")
 println("  Frames: $(sim_params.nframes)")
-println("  Emitters/frame (avg): $(round(n_emitters / sim_params.nframes, digits=1))")
+println("  Emitters/frame (avg): $(round(n_emitters / sim_params.nframes, digits = 1))")
 println()
 
 psf_sigma_pixels_calc = sim_params.σ_psf / pixel_size
 
 println("Detection (PSF-aware interface):")
-println("  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits=2)) pixels)")
+println("  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits = 2)) pixels)")
 println("  Photon threshold: 50.0")
-println("  → DoG sigma_small: $(round(1.0 * psf_sigma_pixels_calc, digits=2)) pixels")
-println("  → DoG sigma_large: $(round(2.0 * psf_sigma_pixels_calc, digits=2)) pixels")
-println("  → Intensity threshold: $(round(SMLMBoxer.photons_to_dog_threshold(50.0, psf_sigma_pixels_calc), digits=2)) ADU")
+println("  → DoG sigma_small: $(round(1.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
+println("  → DoG sigma_large: $(round(2.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
+println("  → Intensity threshold: $(round(SMLMBoxer.photons_to_dog_threshold(50.0, psf_sigma_pixels_calc), digits = 2)) ADU")
 println()
 
 println("Results:")
 println("  Detected: $n_detected")
-println("  Detection rate: $(round(n_detected / n_emitters * 100, digits=1))%")
-println("  Processing time: $(round(t_detect * 1000, digits=1)) ms")
-println("  Throughput: $(round(sim_params.nframes / t_detect, digits=1)) frames/sec")
+println("  Detection rate: $(round(n_detected / n_emitters * 100, digits = 1))%")
+println("  Processing time: $(round(t_detect * 1000, digits = 1)) ms")
+println("  Throughput: $(round(sim_params.nframes / t_detect, digits = 1)) frames/sec")
 println()
 
 println("="^80)
@@ -257,9 +259,9 @@ for i in 1:min(3, size(images, 3))
     else
         frame_norm = zeros(size(frame))
     end
-    filename = joinpath(output_dir, "input_frame_$(lpad(i,3,'0')).png")
+    filename = joinpath(output_dir, "input_frame_$(lpad(i, 3, '0')).png")
     save(filename, Gray.(Float32.(frame_norm)))
-    println("  Saved: input_frame_$(lpad(i,3,'0')).png")
+    println("  Saved: input_frame_$(lpad(i, 3, '0')).png")
 end
 
 # Save example ROI images (first 9 detected ROIs as 3x3 montage)
@@ -268,8 +270,8 @@ if n_detected > 0
     roi_montage = zeros(Float32, roi_batch.roi_size * 3, roi_batch.roi_size * 3)
 
     for i in 1:n_rois_to_save
-        row_idx = div(i-1, 3)
-        col_idx = mod(i-1, 3)
+        row_idx = div(i - 1, 3)
+        col_idx = mod(i - 1, 3)
         roi_data = roi_batch.data[:, :, i]
 
         # Normalize ROI
@@ -308,46 +310,46 @@ open(stats_filename, "w") do io
     println(io, "  Frames: $(sim_params.nframes)")
     println(io, "  Photon rate: $(molecule.γ) Hz")
     println(io, "  k_off: $(k_off) Hz, k_on: $(k_on) Hz")
-    println(io, "  Duty cycle: $(round(k_on / (k_on + k_off) * 100, digits=2))%")
+    println(io, "  Duty cycle: $(round(k_on / (k_on + k_off) * 100, digits = 2))%")
     println(io)
 
     println(io, "GROUND TRUTH:")
     println(io, "  Patterns: $(round(Int, n_patterns))")
     println(io, "  Total emitters: $n_emitters")
-    println(io, "  Emitters/frame (avg): $(round(n_emitters / sim_params.nframes, digits=1))")
+    println(io, "  Emitters/frame (avg): $(round(n_emitters / sim_params.nframes, digits = 1))")
     println(io, "  Emitters/frame (min): $(minimum([count(e -> e.frame == f, smld_ground_truth.emitters) for f in frames_with_emitters]))")
     println(io, "  Emitters/frame (max): $(maximum([count(e -> e.frame == f, smld_ground_truth.emitters) for f in frames_with_emitters]))")
     println(io)
 
     println(io, "IMAGES:")
     println(io, "  Stack size: $(size(images))")
-    println(io, "  Value range: [$(round(minimum(images), digits=1)), $(round(maximum(images), digits=1))] photons")
+    println(io, "  Value range: [$(round(minimum(images), digits = 1)), $(round(maximum(images), digits = 1))] photons")
     println(io)
 
     println(io, "DETECTION (PSF-AWARE):")
-    println(io, "  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits=2)) pixels)")
+    println(io, "  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits = 2)) pixels)")
     println(io, "  Photon threshold: 50.0")
-    println(io, "  DoG sigma_small: $(round(1.0 * psf_sigma_pixels_calc, digits=2)) pixels")
-    println(io, "  DoG sigma_large: $(round(2.0 * psf_sigma_pixels_calc, digits=2)) pixels")
-    println(io, "  Intensity threshold: $(round(SMLMBoxer.photons_to_dog_threshold(50.0, psf_sigma_pixels_calc), digits=2)) ADU")
+    println(io, "  DoG sigma_small: $(round(1.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
+    println(io, "  DoG sigma_large: $(round(2.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
+    println(io, "  Intensity threshold: $(round(SMLMBoxer.photons_to_dog_threshold(50.0, psf_sigma_pixels_calc), digits = 2)) ADU")
     println(io)
 
     println(io, "RESULTS:")
     println(io, "  Detected ROIs: $n_detected")
-    println(io, "  Detection rate: $(round(n_detected / n_emitters * 100, digits=1))%")
+    println(io, "  Detection rate: $(round(n_detected / n_emitters * 100, digits = 1))%")
     if !isempty(detection_rates)
-        println(io, "  Per-frame detection rate (mean): $(round(mean(detection_rates) * 100, digits=1))%")
-        println(io, "  Per-frame detection rate (std): $(round(std(detection_rates) * 100, digits=1))%")
-        println(io, "  Per-frame detection rate (min): $(round(minimum(detection_rates) * 100, digits=1))%")
-        println(io, "  Per-frame detection rate (max): $(round(maximum(detection_rates) * 100, digits=1))%")
+        println(io, "  Per-frame detection rate (mean): $(round(mean(detection_rates) * 100, digits = 1))%")
+        println(io, "  Per-frame detection rate (std): $(round(std(detection_rates) * 100, digits = 1))%")
+        println(io, "  Per-frame detection rate (min): $(round(minimum(detection_rates) * 100, digits = 1))%")
+        println(io, "  Per-frame detection rate (max): $(round(maximum(detection_rates) * 100, digits = 1))%")
     end
     println(io)
 
     println(io, "PERFORMANCE:")
-    println(io, "  Simulation time: $(round(t_sim, digits=2))s")
-    println(io, "  Image generation time: $(round(t_gen, digits=2))s")
-    println(io, "  Detection time: $(round(t_detect, digits=2))s")
-    println(io, "  Detection throughput: $(round(sim_params.nframes / t_detect, digits=1)) frames/sec")
+    println(io, "  Simulation time: $(round(t_sim, digits = 2))s")
+    println(io, "  Image generation time: $(round(t_gen, digits = 2))s")
+    println(io, "  Detection time: $(round(t_detect, digits = 2))s")
+    println(io, "  Detection throughput: $(round(sim_params.nframes / t_detect, digits = 1)) frames/sec")
     println(io)
 
     println(io, "="^80)

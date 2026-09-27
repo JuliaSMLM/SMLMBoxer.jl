@@ -125,58 +125,60 @@ for roi in roi_batch
 end
 ```
 """
-function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}, config::BoxerConfig)
-  # Convert to Float32 for type stability throughout pipeline
-  imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
+function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera, Nothing}, config::BoxerConfig)
+    # Convert to Float32 for type stability throughout pipeline
+    imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
 
-  # Create args from config
-  args = GetBoxesArgs(;
-      imagestack=imagestack_f32,
-      camera=camera,
-      boxsize=config.boxsize,
-      overlap=config.overlap,
-      psf_sigma=config.psf_sigma,
-      min_photons=config.min_photons,
-      sigma_small=config.psf_sigma === nothing ? config.sigma_small : nothing,
-      sigma_large=config.psf_sigma === nothing ? config.sigma_large : nothing,
-      minval=config.psf_sigma === nothing ? config.minval : nothing,
-      backend=config.backend,
-      auto_timeout=config.auto_timeout,
-      gpu_timeout=config.gpu_timeout,
-      on_wait=config.on_wait
-  )
-  return _getboxes_impl(args)
+    # Create args from config
+    args = GetBoxesArgs(;
+        imagestack = imagestack_f32,
+        camera = camera,
+        boxsize = config.boxsize,
+        overlap = config.overlap,
+        psf_sigma = config.psf_sigma,
+        min_photons = config.min_photons,
+        sigma_small = config.psf_sigma === nothing ? config.sigma_small : nothing,
+        sigma_large = config.psf_sigma === nothing ? config.sigma_large : nothing,
+        minval = config.psf_sigma === nothing ? config.minval : nothing,
+        backend = config.backend,
+        auto_timeout = config.auto_timeout,
+        gpu_timeout = config.gpu_timeout,
+        on_wait = config.on_wait
+    )
+    return _getboxes_impl(args)
 end
 
 # Kwargs calling convention (forwards to Config form)
-function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}=nothing;
-                  psf_sigma::Union{Real,Nothing}=nothing,
-                  min_photons::Real=500.0,
-                  sigma_small::Union{Real,Nothing}=nothing,
-                  sigma_large::Union{Real,Nothing}=nothing,
-                  minval::Union{Real,Nothing}=nothing,
-                  boxsize::Int=7,
-                  overlap::Real=2.0,
-                  backend::Symbol=:auto,
-                  auto_timeout::Real=300.0,
-                  gpu_timeout::Real=Inf,
-                  on_wait::Union{Function,Nothing}=nothing)
-  # Build config from kwargs
-  config = BoxerConfig(
-      psf_sigma=psf_sigma === nothing ? nothing : Float64(psf_sigma),
-      min_photons=Float64(min_photons),
-      sigma_small=Float64(sigma_small === nothing ? 1.0 : sigma_small),
-      sigma_large=Float64(sigma_large === nothing ? 2.0 : sigma_large),
-      minval=Float64(minval === nothing ? 0.0 : minval),
-      boxsize=boxsize,
-      overlap=Float64(overlap),
-      backend=backend,
-      auto_timeout=Float64(auto_timeout),
-      gpu_timeout=Float64(gpu_timeout),
-      on_wait=on_wait
-  )
+function getboxes(
+        imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera, Nothing} = nothing;
+        psf_sigma::Union{Real, Nothing} = nothing,
+        min_photons::Real = 500.0,
+        sigma_small::Union{Real, Nothing} = nothing,
+        sigma_large::Union{Real, Nothing} = nothing,
+        minval::Union{Real, Nothing} = nothing,
+        boxsize::Int = 7,
+        overlap::Real = 2.0,
+        backend::Symbol = :auto,
+        auto_timeout::Real = 300.0,
+        gpu_timeout::Real = Inf,
+        on_wait::Union{Function, Nothing} = nothing
+    )
+    # Build config from kwargs
+    config = BoxerConfig(
+        psf_sigma = psf_sigma === nothing ? nothing : Float64(psf_sigma),
+        min_photons = Float64(min_photons),
+        sigma_small = Float64(sigma_small === nothing ? 1.0 : sigma_small),
+        sigma_large = Float64(sigma_large === nothing ? 2.0 : sigma_large),
+        minval = Float64(minval === nothing ? 0.0 : minval),
+        boxsize = boxsize,
+        overlap = Float64(overlap),
+        backend = backend,
+        auto_timeout = Float64(auto_timeout),
+        gpu_timeout = Float64(gpu_timeout),
+        on_wait = on_wait
+    )
 
-  return getboxes(imagestack, camera, config)
+    return getboxes(imagestack, camera, config)
 end
 
 """
@@ -195,8 +197,10 @@ Returns `(coords, batch_size, n_batches, memory_per_batch)`.
 - `use_gpu`: Whether to use GPU for processing
 - `batch_cleanup`: Optional function called after each batch (e.g., for GC)
 """
-function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
-                                 use_gpu::Bool, batch_cleanup::Union{Function,Nothing}=nothing)
+function _process_with_batching(
+        imagestack, args, kernelsize, max_free_mem;
+        use_gpu::Bool, batch_cleanup::Union{Function, Nothing} = nothing
+    )
     # Memory multiplier: 6x for standard DoG, 8x for variance-weighted sCMOS
     # (sCMOS uses in-place DoG subtraction, saving one full-size copy)
     n_copies = args.camera isa SCMOSCamera ? 8 : 6
@@ -205,7 +209,7 @@ function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
     if memory_required <= max_free_mem
         # Single batch: process whole stack
         filtered_stack = dog_filter(imagestack, args)
-        coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=use_gpu)
+        coords = findlocalmax(filtered_stack, kernelsize; minval = args.minval, use_gpu = use_gpu)
         batch_size = size(imagestack, 4)
         n_batches = 1
         memory_per_batch = memory_required
@@ -224,7 +228,7 @@ function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
             end_idx = min(i * batch_size, n_images)
             batch = imagestack[:, :, :, start_idx:end_idx]
             filtered_batch = dog_filter(batch, args)
-            coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=use_gpu)
+            coords_batch = findlocalmax(filtered_batch, kernelsize; minval = args.minval, use_gpu = use_gpu)
 
             # Offset frame indices to actual frame numbers
             frame_offset = start_idx - 1
@@ -252,119 +256,121 @@ end
 Internal implementation of getboxes that does the actual work.
 """
 function _getboxes_impl(args::GetBoxesArgs)
-  start_ns = time_ns()
+    start_ns = time_ns()
 
-  imagestack = reshape_for_flux(args.imagestack)
+    imagestack = reshape_for_flux(args.imagestack)
 
-  minkernelsize = 3
-  kernelsize = Int(floor(args.boxsize - args.overlap))
-  kernelsize = max(minkernelsize, kernelsize)
+    minkernelsize = 3
+    kernelsize = Int(floor(args.boxsize - args.overlap))
+    kernelsize = max(minkernelsize, kernelsize)
 
-  # Estimate memory needed for at least 1 frame (minimum batch)
-  nrows, ncols = size(imagestack, 1), size(imagestack, 2)
-  min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera)
+    # Estimate memory needed for at least 1 frame (minimum batch)
+    nrows, ncols = size(imagestack, 1), size(imagestack, 2)
+    min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera)
 
-  # Track results
-  actual_backend = :cpu
-  device_id = -1
-  batch_size = 0
-  n_batches = 0
-  memory_per_batch = 0
-  gpu_succeeded = false
+    # Track results
+    actual_backend = :cpu
+    device_id = -1
+    batch_size = 0
+    n_batches = 0
+    memory_per_batch = 0
+    gpu_succeeded = false
 
-  if args.backend != :cpu && has_cuda()
-      # GPU path: unified retry loop for :auto and :gpu
-      # Handles all failure modes: no free memory, TOCTOU context race, runtime OOM
-      timeout = args.backend == :auto ? args.auto_timeout : args.gpu_timeout
-      deadline = time() + timeout
+    if args.backend != :cpu && has_cuda()
+        # GPU path: unified retry loop for :auto and :gpu
+        # Handles all failure modes: no free memory, TOCTOU context race, runtime OOM
+        timeout = args.backend == :auto ? args.auto_timeout : args.gpu_timeout
+        deadline = time() + timeout
 
-      while !gpu_succeeded && time() < deadline
-          remaining = max(0.0, deadline - time())
+        while !gpu_succeeded && time() < deadline
+            remaining = max(0.0, deadline - time())
 
-          # Poll NVML for available GPU
-          available, dev_id = poll_gpu_nvml(min_memory_needed;
-              timeout=remaining, on_wait=args.on_wait)
-          !available && break
+            # Poll NVML for available GPU
+            available, dev_id = poll_gpu_nvml(
+                min_memory_needed;
+                timeout = remaining, on_wait = args.on_wait
+            )
+            !available && break
 
-          try
-              CUDA.device!(dev_id)
-              max_free_mem = CUDA.free_memory()
-              coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
-                  imagestack, args, kernelsize, max_free_mem; use_gpu=true)
-              CUDA.synchronize()
-              GC.gc(false)
-              CUDA.reclaim()
-              device_id = dev_id
-              actual_backend = :gpu
-              gpu_succeeded = true
-          catch e
-              @warn "GPU failed, releasing memory and retrying" exception=e
-              GC.gc(false)
-              CUDA.reclaim()
-              # loop back to poll_gpu_nvml
-          end
-      end
+            try
+                CUDA.device!(dev_id)
+                max_free_mem = CUDA.free_memory()
+                coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
+                    imagestack, args, kernelsize, max_free_mem; use_gpu = true
+                )
+                CUDA.synchronize()
+                GC.gc(false)
+                CUDA.reclaim()
+                device_id = dev_id
+                actual_backend = :gpu
+                gpu_succeeded = true
+            catch e
+                @warn "GPU failed, releasing memory and retrying" exception = e
+                GC.gc(false)
+                CUDA.reclaim()
+                # loop back to poll_gpu_nvml
+            end
+        end
 
-      if !gpu_succeeded
-          if args.backend == :gpu
-              error("GPU processing failed after $(timeout)s. " *
-                    "Required: $(Base.format_bytes(min_memory_needed))")
-          else
-              @warn "GPU unavailable after $(timeout)s, using CPU"
-          end
-      end
-  elseif args.backend == :gpu
-      error("GPU backend requested but CUDA is not functional")
-  end
+        if !gpu_succeeded
+            if args.backend == :gpu
+                error(
+                    "GPU processing failed after $(timeout)s. " *
+                        "Required: $(Base.format_bytes(min_memory_needed))"
+                )
+            else
+                @warn "GPU unavailable after $(timeout)s, using CPU"
+            end
+        end
+    elseif args.backend == :gpu
+        error("GPU backend requested but CUDA is not functional")
+    end
 
-  if !gpu_succeeded
-      # CPU path
-      max_free_mem = Sys.free_memory()
-      coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
-          imagestack, args, kernelsize, max_free_mem;
-          use_gpu=false,
-          batch_cleanup=() -> GC.gc(false))
-  end
+    if !gpu_succeeded
+        # CPU path
+        max_free_mem = Sys.free_memory()
+        coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
+            imagestack, args, kernelsize, max_free_mem;
+            use_gpu = false,
+            batch_cleanup = () -> GC.gc(false)
+        )
+    end
 
-  maxcoords = removeoverlap(coords, args)
+    maxcoords = removeoverlap(coords, args)
 
-  # Ensure imagestack is on CPU for box extraction (uses scalar indexing)
-  imagestack_cpu = imagestack isa CuArray ? Array(imagestack) : imagestack
-  boxstack, boxcoords, camera_rois = getboxstack(imagestack_cpu, maxcoords, args)
+    # Ensure imagestack is on CPU for box extraction (uses scalar indexing)
+    imagestack_cpu = imagestack isa CuArray ? Array(imagestack) : imagestack
+    boxstack, boxcoords, camera_rois = getboxstack(imagestack_cpu, maxcoords, args)
 
-  # Create ROIBatch
-  # Convert boxcoords (row, col, frame) to separate x_corners, y_corners vectors
-  n_rois = size(boxstack, 3)
-  x_corners = Vector{Int32}(undef, n_rois)
-  y_corners = Vector{Int32}(undef, n_rois)
-  frame_indices = Vector{Int32}(undef, n_rois)
+    # Create ROIBatch
+    # Convert boxcoords (row, col, frame) to separate x_corners, y_corners vectors
+    n_rois = size(boxstack, 3)
+    x_corners = Vector{Int32}(undef, n_rois)
+    y_corners = Vector{Int32}(undef, n_rois)
+    frame_indices = Vector{Int32}(undef, n_rois)
 
-  for i in 1:n_rois
-    x_corners[i] = Int32(boxcoords[i, 2])  # x = col
-    y_corners[i] = Int32(boxcoords[i, 1])  # y = row
-    frame_indices[i] = Int32(boxcoords[i, 3])
-  end
+    for i in 1:n_rois
+        x_corners[i] = Int32(boxcoords[i, 2])  # x = col
+        y_corners[i] = Int32(boxcoords[i, 1])  # y = row
+        frame_indices[i] = Int32(boxcoords[i, 3])
+    end
 
-  # Use provided camera or create default IdealCamera if none provided
-  camera = if args.camera !== nothing
-    args.camera
-  else
-    # Create minimal IdealCamera with pixel edges matching image size
-    img_rows, img_cols = size(imagestack, 1), size(imagestack, 2)
-    IdealCamera(
-      1:(img_cols+1),  # pixel_edges_x
-      1:(img_rows+1),  # pixel_edges_y
-      1.0f0            # pixel size (arbitrary for default)
-    )
-  end
+    # Use provided camera or create default IdealCamera if none provided
+    camera = if args.camera !== nothing
+        args.camera
+    else
+        # Create minimal IdealCamera with pixel edges matching image size
+        img_rows, img_cols = size(imagestack, 1), size(imagestack, 2)
+        IdealCamera(
+            1:(img_cols + 1),  # pixel_edges_x
+            1:(img_rows + 1),  # pixel_edges_y
+            1.0f0            # pixel size (arbitrary for default)
+        )
+    end
 
-  roi_batch = ROIBatch(boxstack, x_corners, y_corners, frame_indices, camera)
-  elapsed_s = (time_ns() - start_ns) / 1e9
-  info = BoxesInfo(actual_backend, elapsed_s, device_id, n_rois, batch_size, n_batches, memory_per_batch)
+    roi_batch = ROIBatch(boxstack, x_corners, y_corners, frame_indices, camera)
+    elapsed_s = (time_ns() - start_ns) / 1.0e9
+    info = BoxesInfo(actual_backend, elapsed_s, device_id, n_rois, batch_size, n_batches, memory_per_batch)
 
-  return (roi_batch, info)
+    return (roi_batch, info)
 end
-
-
-
-

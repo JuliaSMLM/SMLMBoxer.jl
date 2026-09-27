@@ -5,7 +5,7 @@ using CUDA
 using BenchmarkTools
 
 
-for i in 0:length(CUDA.devices())-1
+for i in 0:(length(CUDA.devices()) - 1)
     CUDA.device!(i)  # Switch to the first device (devices are 0-indexed)
     println("\nSwitched to device: ", CUDA.device())
     # Get the total amount of memory on the device (in GB)
@@ -22,8 +22,7 @@ for i in 0:length(CUDA.devices())-1
 end
 
 
-
-args = SMLMBoxer.GetBoxesArgs(; use_gpu=true)
+args = SMLMBoxer.GetBoxesArgs(; use_gpu = true)
 
 H, W = 128, 256
 nobs = 1000
@@ -31,23 +30,22 @@ nobs = 1000
 
 args.use_gpu = false
 localmax = args.use_gpu ? CUDA.rand(Float32, H, W, 1, nobs) :
-           rand(Float32, H, W, 1, nobs)
+    rand(Float32, H, W, 1, nobs)
 data = localmax .> 0.999 .* localmax
-data = dropdims(data, dims=3)
+data = dropdims(data, dims = 3)
 
 println("cpu")
 # @btime locmaxim  = SMLMBoxer.genlocalmaximage(localmax, args);
 # @btime coords = SMLMBoxer.maxima2coords(localmax, args);
 args.imagestack = data
-@btime boxes, coords = SMLMBoxer.getboxes(imagestack=data, use_gpu=false);
+@btime boxes, coords = SMLMBoxer.getboxes(imagestack = data, use_gpu = false);
 
-@btime boxes, coords = SMLMBoxer.getboxes(imagestack=data, use_gpu=true);
-
+@btime boxes, coords = SMLMBoxer.getboxes(imagestack = data, use_gpu = true);
 
 
 args.use_gpu = true
 localmax = args.use_gpu ? CUDA.rand(Float32, H, W, 1, nobs) :
-           rand(Float32, H, W, 1, nobs)
+    rand(Float32, H, W, 1, nobs)
 println("gpu")
 @btime locmaxim = SMLMBoxer.genlocalmaximage(localmax, args);
 @btime coords = SMLMBoxer.maxima2coords(localmax |> cpu, args);

@@ -9,13 +9,13 @@ Get coordinates of all non-zero pixels in input stack
 # Returns
 - `coords`: List of coords for each frame (always Float32)
 """
-function maxima2coords(imagestack::AbstractArray{T}) where T<:Real
+function maxima2coords(imagestack::AbstractArray{T}) where {T <: Real}
 
     nframes = size(imagestack, 4)
     coords = Vector{Matrix{Float32}}(undef, nframes)
 
     # Count the number of non-zero elements in each frame
-    nboxes = sum(!iszero, imagestack, dims=(1, 2))
+    nboxes = sum(!iszero, imagestack, dims = (1, 2))
 
     for f in 1:nframes
         coords[f] = zeros(Float32, nboxes[f], 4)
@@ -51,7 +51,7 @@ transfers only the sparse indices and values (~1.2 MB for ~100K maxima).
 # Returns
 - `coords`: Vector{Matrix{Float32}} — same format as `maxima2coords`
 """
-function _gpu_maxima2coords(localmaximage::CuArray{T}) where T<:Real
+function _gpu_maxima2coords(localmaximage::CuArray{T}) where {T <: Real}
     nrows, ncols, _, nframes = size(localmaximage)
 
     # Flatten to 1D for findall — GPU prefix-sum compaction
@@ -124,7 +124,7 @@ function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
         for i in 1:ncoords
             if keep[i]
                 ci = coords[f][i, :]
-                for j in (i+1):ncoords
+                for j in (i + 1):ncoords
                     if keep[j]
                         cj = coords[f][j, :]
                         dist = sqrt(sum((ci[1:2] - cj[1:2]) .^ 2)) # Only compare the x and y coordinates

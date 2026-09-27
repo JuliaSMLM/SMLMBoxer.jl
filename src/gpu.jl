@@ -40,7 +40,7 @@ function find_best_gpu()
 
     # Query memory via NVML (no CUDA context needed, safe under contention)
     best, maxfree = 0, 0
-    for i in 0:(n-1)
+    for i in 0:(n - 1)
         info = CUDA.NVML.memory_info(CUDA.NVML.Device(i))
         if info.free > maxfree
             maxfree, best = info.free, i
@@ -75,10 +75,12 @@ A GPU is considered contended when other processes are present AND either:
 When other processes are present but memory is sufficient and utilization is low,
 the GPU is still considered available.
 """
-function poll_gpu_nvml(required_bytes::Integer;
+function poll_gpu_nvml(
+        required_bytes::Integer;
         timeout::Real = 30.0,
         poll::Real = 0.5,
-        on_wait = nothing)
+        on_wait = nothing
+    )
 
     n = length(CUDA.devices())
     required_with_margin = required_bytes * 1.5
@@ -90,7 +92,7 @@ function poll_gpu_nvml(required_bytes::Integer;
         best_device = -1
         best_free = 0
 
-        for i in 0:(n-1)
+        for i in 0:(n - 1)
             dev = CUDA.NVML.Device(i)
             info = CUDA.NVML.memory_info(dev)
 
@@ -120,7 +122,7 @@ function poll_gpu_nvml(required_bytes::Integer;
         # Callback for progress reporting
         if on_wait !== nothing
             # Report best available across all GPUs for visibility
-            max_free = maximum(CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(n-1))
+            max_free = maximum(CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(n - 1))
             on_wait(time() - start, max_free, required_bytes)
         end
 
@@ -146,10 +148,12 @@ Uses CUDA calls (requires active context). Used by :gpu mode after device select
 # Returns
 - `true` if memory became available, `false` if timeout reached
 """
-function wait_for_gpu_memory(required_bytes::Integer;
+function wait_for_gpu_memory(
+        required_bytes::Integer;
         timeout::Real = 30.0,
         poll::Real = 0.5,
-        on_wait = nothing)
+        on_wait = nothing
+    )
 
     required_with_margin = required_bytes * 1.5
 
@@ -202,10 +206,12 @@ occur during processing despite NVML pre-check, falls back to CPU.
 - `:gpu` - NVML poll for device, then CUDA wait_for_gpu_memory. Errors if unavailable/timeout
 - `:auto` - NVML poll for device with timeout, falls back to (:cpu, -1) with warning
 """
-function select_backend(backend::Symbol, required_bytes::Integer;
+function select_backend(
+        backend::Symbol, required_bytes::Integer;
         auto_timeout::Real = 300.0,
         gpu_timeout::Real = Inf,
-        on_wait = nothing)
+        on_wait = nothing
+    )
 
     backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
@@ -218,18 +224,22 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         end
 
         # NVML poll to find available device (no CUDA context)
-        available, device_id = poll_gpu_nvml(required_bytes; timeout=gpu_timeout, on_wait=on_wait)
+        available, device_id = poll_gpu_nvml(required_bytes; timeout = gpu_timeout, on_wait = on_wait)
         if !available
-            error("No GPU available after $(gpu_timeout)s. " *
-                  "Required: $(Base.format_bytes(required_bytes))")
+            error(
+                "No GPU available after $(gpu_timeout)s. " *
+                    "Required: $(Base.format_bytes(required_bytes))"
+            )
         end
 
         # Activate chosen device and confirm memory via CUDA
         CUDA.device!(device_id)
-        if !wait_for_gpu_memory(required_bytes; timeout=min(gpu_timeout, 10.0), on_wait=on_wait)
-            error("GPU $device_id memory not available. " *
-                  "Required: $(Base.format_bytes(required_bytes)), " *
-                  "Available: $(Base.format_bytes(CUDA.free_memory()))")
+        if !wait_for_gpu_memory(required_bytes; timeout = min(gpu_timeout, 10.0), on_wait = on_wait)
+            error(
+                "GPU $device_id memory not available. " *
+                    "Required: $(Base.format_bytes(required_bytes)), " *
+                    "Available: $(Base.format_bytes(CUDA.free_memory()))"
+            )
         end
         return (:gpu, device_id)
 
@@ -239,13 +249,13 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         end
 
         # NVML poll all GPUs - no CUDA context creation
-        available, device_id = poll_gpu_nvml(required_bytes; timeout=auto_timeout, on_wait=on_wait)
+        available, device_id = poll_gpu_nvml(required_bytes; timeout = auto_timeout, on_wait = on_wait)
         if available
             CUDA.device!(device_id)
             return (:gpu, device_id)
         else
             @warn "No GPU available after $(auto_timeout)s, using CPU. " *
-                  "Required: $(Base.format_bytes(required_bytes))"
+                "Required: $(Base.format_bytes(required_bytes))"
             return (:cpu, -1)
         end
     end

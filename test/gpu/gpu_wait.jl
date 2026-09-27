@@ -29,9 +29,11 @@ function run_gpu_wait_tests()
     # Test 1: backend=:cpu should always use CPU
     println("\n[1/6] Testing backend=:cpu...")
     try
-        (result, info) = getboxes(img, camera;
-            backend=:cpu,
-            sigma_small=1.5, sigma_large=3.0, minval=0.1)
+        (result, info) = getboxes(
+            img, camera;
+            backend = :cpu,
+            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
+        )
         println("      Passed: $(length(result)) ROIs detected on CPU (backend=$(info.backend))")
     catch e
         println("      FAILED: $e")
@@ -41,10 +43,12 @@ function run_gpu_wait_tests()
     # Test 2: backend=:auto should work (GPU or CPU fallback)
     println("\n[2/6] Testing backend=:auto...")
     try
-        (result, info) = getboxes(img, camera;
-            backend=:auto,
-            auto_timeout=5.0,
-            sigma_small=1.5, sigma_large=3.0, minval=0.1)
+        (result, info) = getboxes(
+            img, camera;
+            backend = :auto,
+            auto_timeout = 5.0,
+            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
+        )
         println("      Passed: $(length(result)) ROIs detected (backend=$(info.backend))")
     catch e
         println("      FAILED: $e")
@@ -61,10 +65,12 @@ function run_gpu_wait_tests()
         # With impossibly short timeout, should either:
         # a) Fall back to CPU with warning (if GPU memory check takes time)
         # b) Still use GPU (if memory was immediately available)
-        (result, info) = getboxes(large_img, large_camera;
-            backend=:auto,
-            auto_timeout=0.001,  # Impossibly short
-            sigma_small=1.5, sigma_large=3.0, minval=0.1)
+        (result, info) = getboxes(
+            large_img, large_camera;
+            backend = :auto,
+            auto_timeout = 0.001,  # Impossibly short
+            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
+        )
         println("      Passed: $(length(result)) ROIs (backend=$(info.backend))")
     catch e
         println("      Note: $e")
@@ -81,13 +87,15 @@ function run_gpu_wait_tests()
     end
 
     try
-        (result, info) = getboxes(img, camera;
-            backend=:auto,
-            auto_timeout=2.0,
-            on_wait=on_wait_cb,
-            sigma_small=1.5, sigma_large=3.0, minval=0.1)
+        (result, info) = getboxes(
+            img, camera;
+            backend = :auto,
+            auto_timeout = 2.0,
+            on_wait = on_wait_cb,
+            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
+        )
         if wait_count[] > 0
-            println("      Passed: Callback called $(wait_count[]) times, last elapsed=$(round(wait_elapsed[], digits=2))s")
+            println("      Passed: Callback called $(wait_count[]) times, last elapsed=$(round(wait_elapsed[], digits = 2))s")
         else
             println("      Note: Callback not called (GPU memory immediately available)")
         end
@@ -100,10 +108,12 @@ function run_gpu_wait_tests()
     if CUDA.functional()
         println("\n[5/6] Testing backend=:gpu (GPU required)...")
         try
-            (result, info) = getboxes(img, camera;
-                backend=:gpu,
-                gpu_timeout=10.0,
-                sigma_small=1.5, sigma_large=3.0, minval=0.1)
+            (result, info) = getboxes(
+                img, camera;
+                backend = :gpu,
+                gpu_timeout = 10.0,
+                sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
+            )
             println("      Passed: $(length(result)) ROIs detected on GPU (device=$(info.device_id))")
         catch e
             println("      FAILED: $e")
@@ -116,9 +126,11 @@ function run_gpu_wait_tests()
     # Test 6: Explicit backend=:cpu
     println("\n[6/6] Testing explicit backend=:cpu...")
     try
-        (result, info) = getboxes(img, camera;
-            backend=:cpu,
-            sigma_small=1.5, sigma_large=3.0, minval=0.1)
+        (result, info) = getboxes(
+            img, camera;
+            backend = :cpu,
+            sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
+        )
         @assert info.backend == :cpu "Expected :cpu backend"
         println("      Passed: $(length(result)) ROIs detected (backend=$(info.backend))")
     catch e
@@ -155,7 +167,7 @@ function test_memory_pressure_wait()
 
     # Get current free memory
     free_mem = CUDA.free_memory()
-    println("Initial free GPU memory: $(round(free_mem / 1e9, digits=2)) GB")
+    println("Initial free GPU memory: $(round(free_mem / 1.0e9, digits = 2)) GB")
 
     # Calculate how much to allocate to leave only ~500MB free
     target_free = 500_000_000  # 500MB
@@ -168,7 +180,7 @@ function test_memory_pressure_wait()
 
     # Allocate blocker array
     n_floats = alloc_size ÷ sizeof(Float32)
-    println("Allocating blocker: $(round(alloc_size / 1e9, digits=2)) GB...")
+    println("Allocating blocker: $(round(alloc_size / 1.0e9, digits = 2)) GB...")
 
     blocker = nothing
     wait_triggered = Ref(false)
@@ -178,7 +190,7 @@ function test_memory_pressure_wait()
         CUDA.synchronize()
 
         new_free = CUDA.free_memory()
-        println("Free memory after blocker: $(round(new_free / 1e9, digits=2)) GB")
+        println("Free memory after blocker: $(round(new_free / 1.0e9, digits = 2)) GB")
 
         # Test data - use larger image to require more GPU memory
         # With 6x multiplier, 256x256x50 needs ~256*256*50*4*6 = ~384MB
@@ -186,22 +198,26 @@ function test_memory_pressure_wait()
         camera = IdealCamera(1:257, 1:257, 0.1f0)
 
         mem_estimate = 256 * 256 * 50 * 4 * 6
-        println("Estimated memory needed: $(round(mem_estimate / 1e6, digits=1)) MB")
+        println("Estimated memory needed: $(round(mem_estimate / 1.0e6, digits = 1)) MB")
 
         # This should either wait or fall back to CPU
         on_wait_cb = (elapsed, avail, req) -> begin
             wait_triggered[] = true
-            println("  Wait callback: elapsed=$(round(elapsed, digits=2))s, " *
-                    "avail=$(round(avail/1e6, digits=1))MB, req=$(round(req/1e6, digits=1))MB")
+            println(
+                "  Wait callback: elapsed=$(round(elapsed, digits = 2))s, " *
+                    "avail=$(round(avail / 1.0e6, digits = 1))MB, req=$(round(req / 1.0e6, digits = 1))MB"
+            )
         end
 
         println("\nRunning getboxes with memory pressure...")
         try
-            (result, info) = getboxes(img, camera;
-                backend=:auto,
-                auto_timeout=3.0,
-                on_wait=on_wait_cb,
-                sigma_small=1.5, sigma_large=3.0, minval=0.1)
+            (result, info) = getboxes(
+                img, camera;
+                backend = :auto,
+                auto_timeout = 3.0,
+                on_wait = on_wait_cb,
+                sigma_small = 1.5, sigma_large = 3.0, minval = 0.1
+            )
 
             println("Result: $(length(result)) ROIs (backend=$(info.backend))")
 
@@ -228,9 +244,9 @@ function test_memory_pressure_wait()
         # Handle any other errors - GPU OOM is expected under memory pressure
         err_str = string(outer_e)
         if occursin("Out of GPU memory", err_str) ||
-           occursin("OutOfMemory", err_str) ||
-           occursin("OutOfGPUMemoryError", err_str) ||
-           outer_e isa CUDA.OutOfGPUMemoryError
+                occursin("OutOfMemory", err_str) ||
+                occursin("OutOfGPUMemoryError", err_str) ||
+                outer_e isa CUDA.OutOfGPUMemoryError
             println("GPU OOM during operation - this is expected under memory pressure")
             println("(cuDNN workspace allocation requires more than our estimate)")
             return true
@@ -245,7 +261,7 @@ function test_memory_pressure_wait()
             blocker = nothing
             GC.gc()
             CUDA.reclaim()
-            println("\nBlocker released. Free memory: $(round(CUDA.free_memory() / 1e9, digits=2)) GB")
+            println("\nBlocker released. Free memory: $(round(CUDA.free_memory() / 1.0e9, digits = 2)) GB")
         end
     end
 end

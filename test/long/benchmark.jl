@@ -47,21 +47,21 @@ end
 
 Create synthetic image stack with known number of Gaussian spots.
 """
-function create_synthetic_image(nx, ny, nframes, nspots_per_frame; sigma=2.0, intensity=100.0)
+function create_synthetic_image(nx, ny, nframes, nspots_per_frame; sigma = 2.0, intensity = 100.0)
     image = zeros(Float32, nx, ny, nframes)
     expected_coords = []
 
     for frame in 1:nframes
         for _ in 1:nspots_per_frame
             # Random position with border margin
-            x = rand(10:(nx-10))
-            y = rand(10:(ny-10))
+            x = rand(10:(nx - 10))
+            y = rand(10:(ny - 10))
 
             # Add Gaussian spot
-            for i in max(1, x-10):min(nx, x+10)
-                for j in max(1, y-10):min(ny, y+10)
-                    r2 = (i-x)^2 + (j-y)^2
-                    image[i, j, frame] += intensity * exp(-r2 / (2*sigma^2))
+            for i in max(1, x - 10):min(nx, x + 10)
+                for j in max(1, y - 10):min(ny, y + 10)
+                    r2 = (i - x)^2 + (j - y)^2
+                    image[i, j, frame] += intensity * exp(-r2 / (2 * sigma^2))
                 end
             end
 
@@ -77,16 +77,17 @@ end
 
 Benchmark getboxes with warmup and multiple runs.
 """
-function benchmark_getboxes(image, camera; backend::Symbol=:cpu, nwarmup=WARMUP_ITERATIONS, nruns=BENCHMARK_RUNS)
+function benchmark_getboxes(image, camera; backend::Symbol = :cpu, nwarmup = WARMUP_ITERATIONS, nruns = BENCHMARK_RUNS)
     # Warmup
     for _ in 1:nwarmup
-        (result, _) = getboxes(image, camera;
-            boxsize=7,
-            overlap=3.0,
-            sigma_small=1.0,
-            sigma_large=2.0,
-            minval=5.0,
-            backend=backend
+        (result, _) = getboxes(
+            image, camera;
+            boxsize = 7,
+            overlap = 3.0,
+            sigma_small = 1.0,
+            sigma_large = 2.0,
+            minval = 5.0,
+            backend = backend
         )
     end
 
@@ -101,13 +102,14 @@ function benchmark_getboxes(image, camera; backend::Symbol=:cpu, nwarmup=WARMUP_
         end
 
         t0 = time()
-        (result, _) = getboxes(image, camera;
-            boxsize=7,
-            overlap=3.0,
-            sigma_small=1.0,
-            sigma_large=2.0,
-            minval=5.0,
-            backend=backend
+        (result, _) = getboxes(
+            image, camera;
+            boxsize = 7,
+            overlap = 3.0,
+            sigma_small = 1.0,
+            sigma_large = 2.0,
+            minval = 5.0,
+            backend = backend
         )
         t1 = time()
 
@@ -138,19 +140,19 @@ function run_single_benchmark(config::BenchmarkConfig, has_cuda::Bool)
         readnoise_map = 3.0f0 .+ 2.0f0 .* rand(Float32, config.nx, config.ny)
         camera = SCMOSCamera(
             config.nx, config.ny, pixel_size, readnoise_map,
-            offset=100.0f0, gain=2.0f0, qe=0.9f0
+            offset = 100.0f0, gain = 2.0f0, qe = 0.9f0
         )
     else
         error("Unknown camera type: $(config.camera_type)")
     end
 
     # CPU benchmark
-    cpu_time, cpu_found = benchmark_getboxes(image, camera; backend=:cpu)
+    cpu_time, cpu_found = benchmark_getboxes(image, camera; backend = :cpu)
     cpu_throughput = config.nframes / cpu_time
 
     # GPU benchmark
     if has_cuda
-        gpu_time, gpu_found = benchmark_getboxes(image, camera; backend=:auto)
+        gpu_time, gpu_found = benchmark_getboxes(image, camera; backend = :auto)
         gpu_throughput = config.nframes / gpu_time
         speedup = cpu_time / gpu_time
     else
@@ -204,12 +206,16 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
         cam_str = r.config.camera_type == :ideal ? "Ideal" : "sCMOS"
 
         if has_cuda
-            @printf("│ %-14s │ %-6s │ %-12s │ %8d │ %8d │ %8d │ %12.2f │ %12.2f │ %6.2fx │\n",
-                    r.config.label, cam_str, size_str, r.expected_spots, r.cpu_found,
-                    r.gpu_found, r.cpu_throughput, r.gpu_throughput, r.speedup)
+            @printf(
+                "│ %-14s │ %-6s │ %-12s │ %8d │ %8d │ %8d │ %12.2f │ %12.2f │ %6.2fx │\n",
+                r.config.label, cam_str, size_str, r.expected_spots, r.cpu_found,
+                r.gpu_found, r.cpu_throughput, r.gpu_throughput, r.speedup
+            )
         else
-            @printf("│ %-14s │ %-6s │ %-12s │ %8d │ %8d │ %12.2f │\n",
-                    r.config.label, cam_str, size_str, r.expected_spots, r.cpu_found, r.cpu_throughput)
+            @printf(
+                "│ %-14s │ %-6s │ %-12s │ %8d │ %8d │ %12.2f │\n",
+                r.config.label, cam_str, size_str, r.expected_spots, r.cpu_found, r.cpu_throughput
+            )
         end
     end
 
@@ -226,8 +232,12 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
 
     if has_cuda
         speedups = [r.speedup for r in results if !isnan(r.speedup)]
-        println(@sprintf("  Mean GPU speedup:   %.2fx (range: %.2fx - %.2fx)",
-                        mean(speedups), minimum(speedups), maximum(speedups)))
+        println(
+            @sprintf(
+                "  Mean GPU speedup:   %.2fx (range: %.2fx - %.2fx)",
+                mean(speedups), minimum(speedups), maximum(speedups)
+            )
+        )
         println(@sprintf("  Median GPU speedup: %.2fx", median(speedups)))
     end
 
@@ -247,15 +257,19 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
             println("  ⚠ CPU and GPU detection counts differ in some tests")
             for r in results
                 if r.cpu_found != r.gpu_found
-                    println(@sprintf("    - %s: CPU=%d, GPU=%d (diff=%d)",
-                                    r.config.label, r.cpu_found, r.gpu_found, r.gpu_found - r.cpu_found))
+                    println(
+                        @sprintf(
+                            "    - %s: CPU=%d, GPU=%d (diff=%d)",
+                            r.config.label, r.cpu_found, r.gpu_found, r.gpu_found - r.cpu_found
+                        )
+                    )
                 end
             end
         end
     end
 
     println("="^110)
-    println()
+    return println()
 end
 
 """
@@ -269,22 +283,22 @@ function run_comprehensive_benchmark()
     # Define benchmark configurations - test both camera types
     configs = [
         # IdealCamera configurations (standard DoG filtering)
-        BenchmarkConfig("Small sparse",    128, 128, 10, 20, :ideal),
-        BenchmarkConfig("Medium sparse",   256, 256, 10, 50, :ideal),
-        BenchmarkConfig("Large sparse",    512, 512, 10, 100, :ideal),
-        BenchmarkConfig("Med 50-frame",    256, 256, 50, 50, :ideal),
+        BenchmarkConfig("Small sparse", 128, 128, 10, 20, :ideal),
+        BenchmarkConfig("Medium sparse", 256, 256, 10, 50, :ideal),
+        BenchmarkConfig("Large sparse", 512, 512, 10, 100, :ideal),
+        BenchmarkConfig("Med 50-frame", 256, 256, 50, 50, :ideal),
 
         # SCMOSCamera configurations (variance-weighted filtering)
-        BenchmarkConfig("Small sparse",    128, 128, 10, 20, :scmos),
-        BenchmarkConfig("Medium sparse",   256, 256, 10, 50, :scmos),
-        BenchmarkConfig("Large sparse",    512, 512, 10, 100, :scmos),
-        BenchmarkConfig("Med 50-frame",    256, 256, 50, 50, :scmos),
+        BenchmarkConfig("Small sparse", 128, 128, 10, 20, :scmos),
+        BenchmarkConfig("Medium sparse", 256, 256, 10, 50, :scmos),
+        BenchmarkConfig("Large sparse", 512, 512, 10, 100, :scmos),
+        BenchmarkConfig("Med 50-frame", 256, 256, 50, 50, :scmos),
     ]
 
     println("\nRunning benchmarks on $(length(configs)) configurations...")
     if has_cuda
         println("GPU detected: ", CUDA.name(CUDA.device()))
-        println("GPU memory: ", round(CUDA.totalmem(CUDA.device())/1e9, digits=2), " GB")
+        println("GPU memory: ", round(CUDA.totalmem(CUDA.device()) / 1.0e9, digits = 2), " GB")
     else
         println("No GPU detected - CPU only")
     end
