@@ -11,10 +11,10 @@ The benchmark measures:
 - Detection accuracy (found vs expected spots)
 - GPU speedup over CPU
 
-Only runs in local testing environments (not on GitHub Actions).
+Long group: runs on a lab machine; the GPU columns are filled only when CUDA is functional.
 """
 
-# All using statements must be in runtests.jl
+using Test, SMLMBoxer, SMLMData, CUDA, Statistics, Printf
 
 # Configuration
 const WARMUP_ITERATIONS = 2
@@ -306,4 +306,24 @@ function run_comprehensive_benchmark()
     print_benchmark_table(results, has_cuda)
 
     return results
+end
+
+@testset "Performance benchmark" begin
+    results = run_comprehensive_benchmark()
+    @test results !== nothing
+    @test !isempty(results)
+    @test length(results) >= 5  # at least 5 configurations
+    @test all(r -> r.cpu_throughput > 0, results)
+    for r in results
+        @test r.cpu_found / r.expected_spots > 0.5
+    end
+    if CUDA.functional()
+        @test all(r -> r.gpu_throughput > 0, results)
+        @test all(r -> r.speedup > 0, results)
+        # GPU should be faster on larger images
+        large_results = filter(r -> r.config.nx >= 256, results)
+        if !isempty(large_results)
+            @test any(r -> r.speedup > 1.0, large_results)
+        end
+    end
 end

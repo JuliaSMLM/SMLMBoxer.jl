@@ -2,7 +2,7 @@
 Local GPU wait/timeout test for SMLMBoxer.
 
 Tests the backend selection and GPU memory waiting functionality.
-Only runs locally (not on CI) since it requires GPU and tests timeout behavior.
+GPU group: needs a functional CUDA device; runs on a lab machine.
 """
 
 using SMLMBoxer
@@ -248,4 +248,10 @@ function test_memory_pressure_wait()
             println("\nBlocker released. Free memory: $(round(CUDA.free_memory() / 1e9, digits=2)) GB")
         end
     end
+end
+
+@testset "GPU wait/timeout" begin
+    @test run_gpu_wait_tests() == true
+    # Memory pressure (may not trigger on high-memory GPUs)
+    @test test_memory_pressure_wait() == true
 end

@@ -1,0 +1,17 @@
+# Test groups (admiral decision 0008). Declare only the groups this package has; every declared
+# group needs at least one .jl file, and every folder under test/ must be a declared group.
+#   Core      test/*.jl         fast curated tests; plain Pkg.test(); at most 2 min on CI
+#   QA        test/qa/          Aqua and ExplicitImports; its own CI job
+#   GPU       test/gpu/         needs CUDA; lab machine
+#   Long      test/long/        CPU/GPU benchmark with detection-rate checks; lab machine
+# SMLMBoxer has no Data or Hardware tests: every test runs on synthetic images.
+# CUDA is a direct dependency of the package, so the GPU group needs no Project.toml of its own.
+
+[Core]
+
+[QA]
+
+[GPU]
+requires = ["cuda"]
+
+[Long]
