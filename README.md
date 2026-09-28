@@ -45,7 +45,7 @@ GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-p
 
 | Mode | Camera | Filtering | Use Case |
 |------|--------|-----------|----------|
-| Standard DoG | `IdealCamera` | NNlib convolution (cuDNN on GPU) | Uniform noise, simulated data |
+| Standard DoG | `IdealCamera` | NNlib on CPU, KernelAbstractions kernel on GPU | Uniform noise, simulated data |
 | Variance-weighted DoG | `SCMOSCamera` | Inverse-variance weighting via KernelAbstractions | Spatially-varying readnoise |
 
 Variance weighting is automatic when an `SCMOSCamera` is provided — low-noise pixels get high weight, high-noise pixels get reduced influence.
@@ -119,7 +119,7 @@ Benchmarked on AMD Ryzen Threadripper PRO 5975WX / NVIDIA RTX A6000, 10 frames (
 | 256×256 | 15 | 3,752 | 6 | 2,557 |
 | 512×512 | 4 | 1,553 | 1 | 927 |
 
-Standard DoG uses NNlib/cuDNN; variance-weighted sCMOS uses KernelAbstractions custom kernels. Run `Pkg.test("SMLMBoxer")` locally to benchmark your hardware.
+Standard DoG uses NNlib on CPU and a KernelAbstractions kernel on GPU; variance-weighted sCMOS uses KernelAbstractions custom kernels on both. Run `Pkg.test("SMLMBoxer")` locally to benchmark your hardware.
 
 ## Algorithm Reference
 

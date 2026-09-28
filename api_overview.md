@@ -35,7 +35,7 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 - GPU-accelerated via KernelAbstractions.jl (device-agnostic kernels)
 
 ### GPU Acceleration and Scheduling
-- Standard DoG: NNlib with cuDNN backend (10-100x speedup)
+- Standard DoG: NNlib on CPU, KernelAbstractions kernel on GPU (10-100x speedup)
 - Variance-weighted: KernelAbstractions custom kernels (same code for CPU/GPU)
 - Multi-GPU support: NVML-based polling selects GPU with most free memory across all devices
 

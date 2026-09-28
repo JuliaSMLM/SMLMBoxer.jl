@@ -87,7 +87,8 @@ This provides GPU acceleration for sCMOS cameras (10-100x speedup on large image
 ## Standard Filtering (IdealCamera or no camera)
 
 Standard DoG convolution is used when no camera is provided or with IdealCamera.
-The convolution is performed via NNlib (using cuDNN on GPU) or CPU, depending on `backend`.
+The convolution runs as a KernelAbstractions kernel on the GPU, or via NNlib on the CPU,
+depending on `backend`.
 
 After filtering, local maxima above `minval` are identified. Boxes are cut
 out around each maximum, excluding overlaps.
