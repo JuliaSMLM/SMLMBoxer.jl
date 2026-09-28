@@ -65,9 +65,17 @@ end
 
 function Base.show(io::IO, config::BoxerConfig)
     return if config.psf_sigma !== nothing
-        print(io, "BoxerConfig(psf_sigma=$(config.psf_sigma), min_photons=$(config.min_photons), boxsize=$(config.boxsize), backend=$(config.backend))")
+        print(
+            io, "BoxerConfig(psf_sigma=$(config.psf_sigma), " *
+                "min_photons=$(config.min_photons), boxsize=$(config.boxsize), " *
+                "backend=$(config.backend))"
+        )
     else
-        print(io, "BoxerConfig(σ_small=$(config.sigma_small), σ_large=$(config.sigma_large), minval=$(config.minval), boxsize=$(config.boxsize), backend=$(config.backend))")
+        print(
+            io, "BoxerConfig(σ_small=$(config.sigma_small), " *
+                "σ_large=$(config.sigma_large), minval=$(config.minval), " *
+                "boxsize=$(config.boxsize), backend=$(config.backend))"
+        )
     end
 end
 
@@ -100,7 +108,11 @@ function Base.show(io::IO, info::BoxesInfo)
     mem_kb = info.memory_per_batch / 1024
     mem_str = mem_kb >= 1024 ?
         "$(round(mem_kb / 1024, digits = 1)) MB" : "$(round(mem_kb, digits = 1)) KB"
-    return print(io, "BoxesInfo($(info.n_rois) ROIs, $(round(elapsed_ms, digits = 1)) ms, $(info.backend), $(info.n_batches) batches × $(info.batch_size), $(mem_str)/batch)")
+    return print(
+        io, "BoxesInfo($(info.n_rois) ROIs, $(round(elapsed_ms, digits = 1)) " *
+            "ms, $(info.backend), $(info.n_batches) batches " *
+            "× $(info.batch_size), $(mem_str)/batch)"
+    )
 end
 
 """
@@ -277,7 +289,8 @@ mutable struct GetBoxesArgs
                 error(
                     "psf_sigma in physical units (microns) requires camera to be provided. "
                         *
-                        "Either provide a camera or use the advanced interface with sigma_small/sigma_large in pixels."
+                        "Either provide a camera or use the advanced interface with " *
+                        "sigma_small/sigma_large in pixels."
                 )
             end
 

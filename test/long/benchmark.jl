@@ -183,7 +183,10 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
     println("="^110)
     println("SMLMBOXER PERFORMANCE BENCHMARK - CPU vs GPU")
     println("="^110)
-    println("Configuration: Warmup=$WARMUP_ITERATIONS, Benchmark=$BENCHMARK_RUNS runs (median time)")
+    println(
+        "Configuration: Warmup=$WARMUP_ITERATIONS, Benchmark=$BENCHMARK_RUNS runs " *
+            "(median time)"
+    )
     println("Spot parameters: σ=2.0 pixels, intensity=100 ADU, min detection=5.0 ADU")
     println("Processing: boxsize=7, overlap=3.0, DoG filter (σ_small=1.0, σ_large=2.0)")
     println("="^110)
@@ -191,19 +194,43 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
 
     # Table header
     if has_cuda
-        println("┌────────────────┬────────┬──────────────┬──────────┬──────────┬──────────┬──────────────┬──────────────┬─────────┐")
-        println("│ Configuration  │ Camera │ Image Size   │ Expected │ CPU      │ GPU      │ CPU          │ GPU          │ Speedup │")
-        println("│                │        │              │ Spots    │ Found    │ Found    │ (images/sec) │ (images/sec) │         │")
+        println(
+            "┌────────────────┬────────┬──────────────┬──────────┬──────────┬────────" *
+                "──┬──────────────┬──────────────┬─────────┐"
+        )
+        println(
+            "│ Configuration  │ Camera │ Image Size   │ Expected │ CPU      │ GPU    " *
+                "  │ CPU          │ GPU          │ Speedup │"
+        )
+        println(
+            "│                │        │              │ Spots    │ Found    │ Found  " *
+                "  │ (images/sec) │ (images/sec) │         │"
+        )
     else
-        println("┌────────────────┬────────┬──────────────┬──────────┬──────────┬──────────────┐")
-        println("│ Configuration  │ Camera │ Image Size   │ Expected │ CPU      │ CPU          │")
-        println("│                │        │              │ Spots    │ Found    │ (images/sec) │")
+        println(
+            "┌────────────────┬────────┬──────────────┬──────────┬──────────┬────────" *
+                "──────┐"
+        )
+        println(
+            "│ Configuration  │ Camera │ Image Size   │ Expected │ CPU      │ CPU    " *
+                "      │"
+        )
+        println(
+            "│                │        │              │ Spots    │ Found    │ " *
+                "(images/sec) │"
+        )
     end
 
     if has_cuda
-        println("├────────────────┼────────┼──────────────┼──────────┼──────────┼──────────┼──────────────┼──────────────┼─────────┤")
+        println(
+            "├────────────────┼────────┼──────────────┼──────────┼──────────┼────────" *
+                "──┼──────────────┼──────────────┼─────────┤"
+        )
     else
-        println("├────────────────┼────────┼──────────────┼──────────┼──────────┼──────────────┤")
+        println(
+            "├────────────────┼────────┼──────────────┼──────────┼──────────┼────────" *
+                "──────┤"
+        )
     end
 
     for r in results
@@ -226,9 +253,15 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
     end
 
     if has_cuda
-        println("└────────────────┴────────┴──────────────┴──────────┴──────────┴──────────┴──────────────┴──────────────┴─────────┘")
+        println(
+            "└────────────────┴────────┴──────────────┴──────────┴──────────┴────────" *
+                "──┴──────────────┴──────────────┴─────────┘"
+        )
     else
-        println("└────────────────┴────────┴──────────────┴──────────┴──────────┴──────────────┘")
+        println(
+            "└────────────────┴────────┴──────────────┴──────────┴──────────┴────────" *
+                "──────┘"
+        )
     end
     println()
 
@@ -327,7 +360,12 @@ function run_comprehensive_benchmark()
     results = BenchmarkResult[]
 
     for (i, config) in enumerate(configs)
-        print("[$i/$(length(configs))] $(config.label) ($(config.nx)×$(config.ny)×$(config.nframes), $(config.nspots_per_frame) spots/frame)... ")
+        print(
+            "[$i/$(length(configs))] $(config.label) " *
+                "($(config.nx)×$(config.ny)×$(config.nframes), $(config.nspots_per_frame)" *
+                " " *
+                "spots/frame)... "
+        )
 
         result = run_single_benchmark(config, has_cuda)
         push!(results, result)

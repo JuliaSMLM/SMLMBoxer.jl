@@ -67,7 +67,10 @@ camera_ideal = IdealCamera(n_pixels, n_pixels, pixel_size)
 println("  sCMOS Camera: $(n_pixels)×$(n_pixels) pixels")
 println("  Pixel size: $(pixel_size * 1000) nm")
 println("  FOV: $(n_pixels * pixel_size) μm × $(n_pixels * pixel_size) μm")
-println("  Readnoise: $(round(minimum(readnoise_map), digits = 1)) - $(round(maximum(readnoise_map), digits = 1)) e⁻ (spatial variation)")
+println(
+    "  Readnoise: $(round(minimum(readnoise_map), digits = 1)) " *
+        "- $(round(maximum(readnoise_map), digits = 1)) e⁻ (spatial variation)"
+)
 println("  Gain: $(camera_scmos.gain) e⁻/ADU")
 println("  Offset: $(camera_scmos.offset) ADU")
 println()
@@ -140,7 +143,11 @@ t_gen = time() - t_start
 
 println("  sCMOS image generation complete ($(round(t_gen, digits = 2))s)")
 println("  Image stack: $(size(images_scmos))")
-println("  Value range: [$(round(minimum(images_scmos), digits = 1)), $(round(maximum(images_scmos), digits = 1))] ADU")
+println(
+    "  Value range: " *
+        "[$(round(minimum(images_scmos), digits = 1))," *
+        " $(round(maximum(images_scmos), digits = 1))] ADU"
+)
 println("  (includes offset=$(camera_scmos.offset) ADU)")
 println()
 
@@ -151,7 +158,11 @@ images_ideal = gen_images(
     bg = 10.0,
     poisson_noise = true
 )
-println("  IdealCamera images: [$(round(minimum(images_ideal), digits = 1)), $(round(maximum(images_ideal), digits = 1))] photons")
+println(
+    "  IdealCamera images: " *
+        "[$(round(minimum(images_ideal), digits = 1))," *
+        " $(round(maximum(images_ideal), digits = 1))] photons"
+)
 println()
 
 # ============================================================================
@@ -159,7 +170,10 @@ println()
 # ============================================================================
 println("Step 5: Detecting with sCMOS variance-weighted filtering...")
 
-println("  PSF sigma: $(sim_params.σ_psf) μm (= $(round(sim_params.σ_psf / pixel_size, digits = 2)) pixels)")
+println(
+    "  PSF sigma: $(sim_params.σ_psf) μm " *
+        "(= $(round(sim_params.σ_psf / pixel_size, digits = 2)) pixels)"
+)
 println("  Detection threshold: 50 photons (matched to framerate)")
 println("  Using variance-weighted DoG filtering (sCMOS-optimized)")
 println()
@@ -175,7 +189,10 @@ println()
 t_detect_scmos = info_scmos.elapsed_s
 
 n_detected_scmos = length(roi_batch_scmos)
-println("  sCMOS detection complete ($(round(t_detect_scmos * 1000, digits = 1)) ms, backend=$(info_scmos.backend))")
+println(
+    "  sCMOS detection complete ($(round(t_detect_scmos * 1000, digits = 1)) ms, " *
+        "backend=$(info_scmos.backend))"
+)
 println("  Detected: $n_detected_scmos")
 println("  Detection rate: $(round(n_detected_scmos / n_emitters * 100, digits = 1))%")
 println()
@@ -233,7 +250,8 @@ println("    Δ Rate: $(diff_pct > 0 ? "+" : "")$(round(diff_pct, digits = 1))%"
 if abs(diff_detected) > 0
     if diff_detected > 0
         println(
-            "    → Variance weighting improved detection by $(round(abs(diff_pct), digits = 1))%"
+            "    → Variance weighting improved detection " *
+                "by $(round(abs(diff_pct), digits = 1))%"
         )
     else
         println("    → Note: Ideal camera performed better (less noise)")
@@ -245,7 +263,10 @@ println("Processing Speed:")
 println("  sCMOS: $(round(sim_params.nframes / t_detect_scmos, digits = 1)) frames/sec")
 println("  Ideal: $(round(sim_params.nframes / t_detect_ideal, digits = 1)) frames/sec")
 if t_detect_scmos > t_detect_ideal
-    println("  → sCMOS is $(round(t_detect_scmos / t_detect_ideal, digits = 2))x slower (variance computation overhead)")
+    println(
+        "  → sCMOS is $(round(t_detect_scmos / t_detect_ideal, digits = 2))x slower " *
+            "(variance computation overhead)"
+    )
 else
     println("  → Similar performance")
 end

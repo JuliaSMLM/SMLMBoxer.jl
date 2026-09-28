@@ -92,7 +92,12 @@ println("  Generating noisy image (Poisson + readnoise)...")
 img_noisy = Float32.(gen_images(smld, psf, poisson_noise = true, bg = 10.0))
 
 println("  Image size: $(size(img_noisy))")
-println("  Signal range: [$(round(minimum(img_noisy), digits = 1)), $(round(maximum(img_noisy), digits = 1))] ADU")
+println(
+    "  Signal range: " *
+        "[$(round(minimum(img_noisy), digits = 1))," *
+        " $(round(maximum(img_noisy), digits = 1))]" *
+        " ADU"
+)
 println()
 
 # ============================================================================

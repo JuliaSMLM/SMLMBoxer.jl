@@ -107,8 +107,28 @@ println()
 frames_with_emitters = unique([e.frame for e in smld_ground_truth.emitters])
 println("  Blinking statistics:")
 println("    Frames with emitters: $(length(frames_with_emitters)) / $(sim_params.nframes)")
-println("    Min emitters/frame: $(minimum([count(e -> e.frame == f, smld_ground_truth.emitters) for f in frames_with_emitters]))")
-println("    Max emitters/frame: $(maximum([count(e -> e.frame == f, smld_ground_truth.emitters) for f in frames_with_emitters]))")
+println(
+    "    Min emitters/frame:" *
+        " $(
+        minimum(
+            [
+                count(e -> e.frame == f, smld_ground_truth.emitters)
+                    for f in frames_with_emitters
+            ]
+        )
+    )"
+)
+println(
+    "    Max emitters/frame:" *
+        " $(
+        maximum(
+            [
+                count(e -> e.frame == f, smld_ground_truth.emitters)
+                    for f in frames_with_emitters
+            ]
+        )
+    )"
+)
 println()
 
 # ============================================================================
@@ -130,7 +150,11 @@ t_gen = time() - t_start
 println("  Image generation complete ($(round(t_gen, digits = 2))s)")
 println("  Image stack: $(size(images))")
 println("  Data type: $(eltype(images))")
-println("  Value range: [$(round(minimum(images), digits = 1)), $(round(maximum(images), digits = 1))] photons")
+println(
+    "  Value range: " *
+        "[$(round(minimum(images), digits = 1)), $(round(maximum(images), digits = 1))] " *
+        "photons"
+)
 println()
 
 # ============================================================================
@@ -138,7 +162,10 @@ println()
 # ============================================================================
 println("Step 5: Detecting spots with PSF-aware interface (physical units)...")
 
-println("  PSF sigma: $(sim_params.σ_psf) μm (= $(round(sim_params.σ_psf / pixel_size, digits = 2)) pixels)")
+println(
+    "  PSF sigma: $(sim_params.σ_psf) μm " *
+        "(= $(round(sim_params.σ_psf / pixel_size, digits = 2)) pixels)"
+)
 println("  Detection threshold: 50 photons (matched to framerate)")
 println()
 
@@ -218,12 +245,22 @@ psf_sigma_pixels_calc = sim_params.σ_psf / pixel_size
 
 println("Detection (PSF-aware interface):")
 println(
-    "  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits = 2)) pixels)"
+    "  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits = 2)) " *
+        "pixels)"
 )
 println("  Photon threshold: 50.0")
 println("  → DoG sigma_small: $(round(1.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
 println("  → DoG sigma_large: $(round(2.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
-println("  → Intensity threshold: $(round(SMLMBoxer.photons_to_dog_threshold(50.0, psf_sigma_pixels_calc), digits = 2)) ADU")
+println(
+    "  → Intensity " *
+        "threshold:" *
+        " $(
+        round(
+            SMLMBoxer.photons_to_dog_threshold(50.0, psf_sigma_pixels_calc),
+            digits = 2
+        )
+    ) ADU"
+)
 println()
 
 println("Results:")
@@ -324,19 +361,47 @@ open(stats_filename, "w") do io
         io,
         "  Emitters/frame (avg): $(round(n_emitters / sim_params.nframes, digits = 1))"
     )
-    println(io, "  Emitters/frame (min): $(minimum([count(e -> e.frame == f, smld_ground_truth.emitters) for f in frames_with_emitters]))")
-    println(io, "  Emitters/frame (max): $(maximum([count(e -> e.frame == f, smld_ground_truth.emitters) for f in frames_with_emitters]))")
+    println(
+        io, "  Emitters/frame " *
+            "(min):" *
+            " $(
+            minimum(
+                [
+                    count(e -> e.frame == f, smld_ground_truth.emitters)
+                        for f in frames_with_emitters
+                ]
+            )
+        )"
+    )
+    println(
+        io, "  Emitters/frame " *
+            "(max):" *
+            " $(
+            maximum(
+                [
+                    count(e -> e.frame == f, smld_ground_truth.emitters)
+                        for f in frames_with_emitters
+                ]
+            )
+        )"
+    )
     println(io)
 
     println(io, "IMAGES:")
     println(io, "  Stack size: $(size(images))")
-    println(io, "  Value range: [$(round(minimum(images), digits = 1)), $(round(maximum(images), digits = 1))] photons")
+    println(
+        io, "  Value range: " *
+            "[$(round(minimum(images), digits = 1))," *
+            " $(round(maximum(images), digits = 1))] " *
+            "photons"
+    )
     println(io)
 
     println(io, "DETECTION (PSF-AWARE):")
     println(
         io,
-        "  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits = 2)) pixels)"
+        "  PSF sigma: $(sim_params.σ_psf) μm " *
+            "(= $(round(psf_sigma_pixels_calc, digits = 2)) pixels)"
     )
     println(io, "  Photon threshold: 50.0")
     println(
@@ -347,7 +412,16 @@ open(stats_filename, "w") do io
         io,
         "  DoG sigma_large: $(round(2.0 * psf_sigma_pixels_calc, digits = 2)) pixels"
     )
-    println(io, "  Intensity threshold: $(round(SMLMBoxer.photons_to_dog_threshold(50.0, psf_sigma_pixels_calc), digits = 2)) ADU")
+    println(
+        io, "  Intensity " *
+            "threshold:" *
+            " $(
+            round(
+                SMLMBoxer.photons_to_dog_threshold(50.0, psf_sigma_pixels_calc),
+                digits = 2
+            )
+        ) ADU"
+    )
     println(io)
 
     println(io, "RESULTS:")
@@ -356,19 +430,23 @@ open(stats_filename, "w") do io
     if !isempty(detection_rates)
         println(
             io,
-            "  Per-frame detection rate (mean): $(round(mean(detection_rates) * 100, digits = 1))%"
+            "  Per-frame detection rate " *
+                "(mean): $(round(mean(detection_rates) * 100, digits = 1))%"
         )
         println(
             io,
-            "  Per-frame detection rate (std): $(round(std(detection_rates) * 100, digits = 1))%"
+            "  Per-frame detection rate " *
+                "(std): $(round(std(detection_rates) * 100, digits = 1))%"
         )
         println(
             io,
-            "  Per-frame detection rate (min): $(round(minimum(detection_rates) * 100, digits = 1))%"
+            "  Per-frame detection rate " *
+                "(min): $(round(minimum(detection_rates) * 100, digits = 1))%"
         )
         println(
             io,
-            "  Per-frame detection rate (max): $(round(maximum(detection_rates) * 100, digits = 1))%"
+            "  Per-frame detection rate " *
+                "(max): $(round(maximum(detection_rates) * 100, digits = 1))%"
         )
     end
     println(io)
@@ -379,7 +457,8 @@ open(stats_filename, "w") do io
     println(io, "  Detection time: $(round(t_detect, digits = 2))s")
     println(
         io,
-        "  Detection throughput: $(round(sim_params.nframes / t_detect, digits = 1)) frames/sec"
+        "  Detection throughput: $(round(sim_params.nframes / t_detect, digits = 1)) " *
+            "frames/sec"
     )
     println(io)
 

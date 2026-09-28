@@ -104,7 +104,10 @@ result_scmos_pp = getboxes(
 
 println("Detected $(result_scmos_pp.metadata.ndetections) spots")
 println("Camera ROI type: $(typeof(result_scmos_pp.camera_rois[1]))")
-println("Camera ROI has per-pixel calibration: $(result_scmos_pp.camera_rois[1].offset isa AbstractArray)")
+println(
+    "Camera ROI has per-pixel " *
+        "calibration: $(result_scmos_pp.camera_rois[1].offset isa AbstractArray)"
+)
 if result_scmos_pp.camera_rois[1].offset isa AbstractArray
     println("Camera ROI offset shape: $(size(result_scmos_pp.camera_rois[1].offset))")
     println("Expected shape for 7x7 box: (7, 7)")
@@ -146,7 +149,8 @@ result_weighted_cpu = getboxes(
 )
 
 println(
-    "Variance-weighted detection (CPU) found $(result_weighted_cpu.metadata.ndetections) spots"
+    "Variance-weighted detection (CPU) found $(result_weighted_cpu.metadata.ndetections) " *
+        "spots"
 )
 println("Note: Spots in low-noise regions are preferentially detected")
 println("High-noise regions (10x readnoise) are down-weighted during filtering")
@@ -169,7 +173,8 @@ if CUDA.functional()
     )
 
     println(
-        "Variance-weighted detection (GPU) found $(result_weighted_gpu.metadata.ndetections) spots"
+        "Variance-weighted detection (GPU) " *
+            "found $(result_weighted_gpu.metadata.ndetections) spots"
     )
     println("GPU acceleration via KernelAbstractions.jl")
     println("Same kernel code runs on CPU/GPU (device-agnostic)")

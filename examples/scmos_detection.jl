@@ -53,7 +53,10 @@ camera_scmos = SCMOSCamera(
 )
 
 println("  Camera: $(n_pixels)×$(n_pixels) @ $(pixel_size) μm/pixel")
-println("  Readnoise range: $(round(minimum(readnoise_map), digits = 1)) - $(round(maximum(readnoise_map), digits = 1)) e⁻")
+println(
+    "  Readnoise range: $(round(minimum(readnoise_map), digits = 1)) " *
+        "- $(round(maximum(readnoise_map), digits = 1)) e⁻"
+)
 println("  Low-noise region: Left side (x < $(box_size / 2) μm)")
 println("  High-noise region: Right side (x > $(box_size / 2) μm)")
 println()
@@ -112,7 +115,12 @@ println("  Generating noisy sCMOS image...")
 img_scmos = Float32.(gen_images(smld, psf, camera_noise = true, bg = 10.0))
 
 println("  Image size: $(size(img_scmos))")
-println("  Value range: [$(round(minimum(img_scmos), digits = 1)), $(round(maximum(img_scmos), digits = 1))] ADU")
+println(
+    "  Value range: " *
+        "[$(round(minimum(img_scmos), digits = 1))," *
+        " $(round(maximum(img_scmos), digits = 1))]" *
+        " ADU"
+)
 println()
 
 # ============================================================================
