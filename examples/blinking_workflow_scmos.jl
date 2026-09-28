@@ -111,7 +111,9 @@ println()
 println("Step 3: Simulating blinking SMLM data...")
 
 t_start = time()
-_, _, smld_ground_truth = simulate(sim_params; pattern = pattern, molecule = molecule, camera = camera_scmos)
+_, _, smld_ground_truth = simulate(
+    sim_params; pattern = pattern, molecule = molecule, camera = camera_scmos,
+)
 t_sim = time() - t_start
 
 n_emitters = length(smld_ground_truth.emitters)
@@ -230,7 +232,9 @@ println("    Δ Detections: $(diff_detected > 0 ? "+" : "")$(diff_detected)")
 println("    Δ Rate: $(diff_pct > 0 ? "+" : "")$(round(diff_pct, digits = 1))%")
 if abs(diff_detected) > 0
     if diff_detected > 0
-        println("    → Variance weighting improved detection by $(round(abs(diff_pct), digits = 1))%")
+        println(
+            "    → Variance weighting improved detection by $(round(abs(diff_pct), digits = 1))%"
+        )
     else
         println("    → Note: Ideal camera performed better (less noise)")
     end

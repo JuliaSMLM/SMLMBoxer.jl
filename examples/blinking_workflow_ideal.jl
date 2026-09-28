@@ -89,7 +89,9 @@ println("Step 3: Simulating blinking SMLM data...")
 
 # Run simulation (returns pattern, smld_true, smld_noisy)
 t_start = time()
-_, _, smld_ground_truth = simulate(sim_params; pattern = pattern, molecule = molecule, camera = camera)
+_, _, smld_ground_truth = simulate(
+    sim_params; pattern = pattern, molecule = molecule, camera = camera,
+)
 t_sim = time() - t_start
 
 n_emitters = length(smld_ground_truth.emitters)
@@ -215,7 +217,9 @@ println()
 psf_sigma_pixels_calc = sim_params.σ_psf / pixel_size
 
 println("Detection (PSF-aware interface):")
-println("  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits = 2)) pixels)")
+println(
+    "  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits = 2)) pixels)"
+)
 println("  Photon threshold: 50.0")
 println("  → DoG sigma_small: $(round(1.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
 println("  → DoG sigma_large: $(round(2.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
@@ -316,7 +320,10 @@ open(stats_filename, "w") do io
     println(io, "GROUND TRUTH:")
     println(io, "  Patterns: $(round(Int, n_patterns))")
     println(io, "  Total emitters: $n_emitters")
-    println(io, "  Emitters/frame (avg): $(round(n_emitters / sim_params.nframes, digits = 1))")
+    println(
+        io,
+        "  Emitters/frame (avg): $(round(n_emitters / sim_params.nframes, digits = 1))"
+    )
     println(io, "  Emitters/frame (min): $(minimum([count(e -> e.frame == f, smld_ground_truth.emitters) for f in frames_with_emitters]))")
     println(io, "  Emitters/frame (max): $(maximum([count(e -> e.frame == f, smld_ground_truth.emitters) for f in frames_with_emitters]))")
     println(io)
@@ -327,10 +334,19 @@ open(stats_filename, "w") do io
     println(io)
 
     println(io, "DETECTION (PSF-AWARE):")
-    println(io, "  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits = 2)) pixels)")
+    println(
+        io,
+        "  PSF sigma: $(sim_params.σ_psf) μm (= $(round(psf_sigma_pixels_calc, digits = 2)) pixels)"
+    )
     println(io, "  Photon threshold: 50.0")
-    println(io, "  DoG sigma_small: $(round(1.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
-    println(io, "  DoG sigma_large: $(round(2.0 * psf_sigma_pixels_calc, digits = 2)) pixels")
+    println(
+        io,
+        "  DoG sigma_small: $(round(1.0 * psf_sigma_pixels_calc, digits = 2)) pixels"
+    )
+    println(
+        io,
+        "  DoG sigma_large: $(round(2.0 * psf_sigma_pixels_calc, digits = 2)) pixels"
+    )
     println(io, "  Intensity threshold: $(round(SMLMBoxer.photons_to_dog_threshold(50.0, psf_sigma_pixels_calc), digits = 2)) ADU")
     println(io)
 
@@ -338,10 +354,22 @@ open(stats_filename, "w") do io
     println(io, "  Detected ROIs: $n_detected")
     println(io, "  Detection rate: $(round(n_detected / n_emitters * 100, digits = 1))%")
     if !isempty(detection_rates)
-        println(io, "  Per-frame detection rate (mean): $(round(mean(detection_rates) * 100, digits = 1))%")
-        println(io, "  Per-frame detection rate (std): $(round(std(detection_rates) * 100, digits = 1))%")
-        println(io, "  Per-frame detection rate (min): $(round(minimum(detection_rates) * 100, digits = 1))%")
-        println(io, "  Per-frame detection rate (max): $(round(maximum(detection_rates) * 100, digits = 1))%")
+        println(
+            io,
+            "  Per-frame detection rate (mean): $(round(mean(detection_rates) * 100, digits = 1))%"
+        )
+        println(
+            io,
+            "  Per-frame detection rate (std): $(round(std(detection_rates) * 100, digits = 1))%"
+        )
+        println(
+            io,
+            "  Per-frame detection rate (min): $(round(minimum(detection_rates) * 100, digits = 1))%"
+        )
+        println(
+            io,
+            "  Per-frame detection rate (max): $(round(maximum(detection_rates) * 100, digits = 1))%"
+        )
     end
     println(io)
 
@@ -349,7 +377,10 @@ open(stats_filename, "w") do io
     println(io, "  Simulation time: $(round(t_sim, digits = 2))s")
     println(io, "  Image generation time: $(round(t_gen, digits = 2))s")
     println(io, "  Detection time: $(round(t_detect, digits = 2))s")
-    println(io, "  Detection throughput: $(round(sim_params.nframes / t_detect, digits = 1)) frames/sec")
+    println(
+        io,
+        "  Detection throughput: $(round(sim_params.nframes / t_detect, digits = 1)) frames/sec"
+    )
     println(io)
 
     println(io, "="^80)

@@ -20,7 +20,9 @@ showscaled(imagestack)
 
 sigma_small, sigma_large, minval = 1, 2, 0.0
 
-filtered_stack = SMLMBoxer.dog_filter(imagestack, SMLMBoxer.GetBoxesArgs(; sigma_small, sigma_large, minval, use_gpu = true))
+filtered_stack = SMLMBoxer.dog_filter(
+    imagestack, SMLMBoxer.GetBoxesArgs(; sigma_small, sigma_large, minval, use_gpu = true),
+)
 showscaled(filtered_stack |> cpu)
 
 break

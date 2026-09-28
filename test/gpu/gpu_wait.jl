@@ -17,7 +17,9 @@ kw = (sigma_small = 1.5, sigma_large = 3.0, minval = 0.1)
     @test info_cpu.backend == :cpu
     @test info_cpu.device_id == -1
 
-    (roi_auto, info_auto) = getboxes(img, camera; backend = :auto, auto_timeout = 60.0, kw...)
+    (roi_auto, info_auto) = getboxes(
+        img, camera; backend = :auto, auto_timeout = 60.0, kw...,
+    )
     @test info_auto.backend == :gpu
     @test info_auto.device_id >= 0
     @test length(roi_auto) == length(roi_cpu)
@@ -61,7 +63,8 @@ end
         end
         # Precondition: no device has room for one frame, as NVML (the poll) sees it.
         maxfree = maximum(
-            CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(length(CUDA.devices()) - 1)
+            CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free
+                for i in 0:(length(CUDA.devices()) - 1)
         )
         @test maxfree < 1.5 * need
 
@@ -80,7 +83,9 @@ end
         (roi_cpu, _) = getboxes(big, big_camera; backend = :cpu, kw...)
         @test roi.x_corners == roi_cpu.x_corners && roi.y_corners == roi_cpu.y_corners
 
-        @test_throws ErrorException getboxes(big, big_camera; backend = :gpu, gpu_timeout = 2.0, kw...)
+        @test_throws ErrorException getboxes(
+            big, big_camera; backend = :gpu, gpu_timeout = 2.0, kw...,
+        )
     finally
         empty!(blockers)
         GC.gc()

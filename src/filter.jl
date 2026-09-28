@@ -81,13 +81,15 @@ Uses variance-weighted filtering if sCMOS camera is provided.
 # Arguments
 - `imagestack`: Input array of image data
 - `args`: Arguments with sigma values and camera
-- `use_gpu`: Filter on the GPU; the caller's backend decision, which overrides `args.use_gpu`
-  (a CPU fallback must not filter on the GPU)
+- `use_gpu`: Filter on the GPU; the caller's backend decision, which overrides
+  `args.use_gpu` (a CPU fallback must not filter on the GPU)
 
 # Returns
 - `filtered_stack`: Filtered image stack
 """
-function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs; use_gpu::Bool = args.use_gpu)
+function dog_filter(
+        imagestack::AbstractArray{<:Real}, args::GetBoxesArgs; use_gpu::Bool = args.use_gpu,
+    )
 
     sigma_small = args.sigma_small
     sigma_large = args.sigma_large
@@ -95,7 +97,9 @@ function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs; use_g
     # Check if we have an sCMOS camera with variance information
     if args.camera isa SCMOSCamera
         # Use variance-weighted DoG filtering (returns CPU array)
-        filtered_stack = dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args; use_gpu)
+        filtered_stack = dog_filter_variance_weighted(
+            imagestack, sigma_small, sigma_large, args; use_gpu,
+        )
     else
         # Standard DoG filtering (may return CuArray if use_gpu=true)
         dog = dog_kernel(Float32(sigma_small), Float32(sigma_large))
@@ -106,7 +110,8 @@ function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs; use_g
 end
 
 """
-    dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args; use_gpu=args.use_gpu)
+    dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args;
+        use_gpu=args.use_gpu)
 
 Apply variance-weighted DoG filter using sCMOS variance map.
 Implements SMITE-style inverse variance weighting during convolution.
@@ -133,7 +138,9 @@ function dog_filter_variance_weighted(
 
     # Get variance map from camera (variance = readnoise²)
     # Convert to match imagestack element type to avoid type mismatch
-    variance_map = convert(Matrix{eltype(imagestack)}, get_variance_map(args.camera, (nrows, ncols)))
+    variance_map = convert(
+        Matrix{eltype(imagestack)}, get_variance_map(args.camera, (nrows, ncols)),
+    )
 
     # Apply small Gaussian with variance weighting
     filtered_small = convolve_variance_weighted(
@@ -159,8 +166,8 @@ end
 KernelAbstractions kernel for variance-weighted Gaussian convolution.
 Implements SMITE-style inverse variance weighting.
 
-This follows the same KernelAbstractions pattern used in GaussMLE.jl (kernel-abstract branch)
-for seamless CPU/GPU execution and consistent API across JuliaSMLM packages.
+This follows the same KernelAbstractions pattern used in GaussMLE.jl (kernel-abstract
+branch) for seamless CPU/GPU execution and consistent API across JuliaSMLM packages.
 
 # Arguments
 - `output`: Output array (nrows, ncols)
@@ -207,7 +214,8 @@ Backend is selected automatically based on use_gpu parameter.
 end
 
 """
-    variance_weighted_gaussian_kernel_batched!(output, input, variance, sigma, winsize, nrows, ncols)
+    variance_weighted_gaussian_kernel_batched!(output, input, variance, sigma, winsize,
+        nrows, ncols)
 
 Batched KernelAbstractions kernel for variance-weighted Gaussian convolution.
 Processes all frames in a single kernel launch via 3D ndrange=(nrows, ncols, nframes),
@@ -222,7 +230,9 @@ eliminating per-frame launch overhead.
 - `nrows`: Number of rows (passed explicitly for bounds checking)
 - `ncols`: Number of columns
 """
-@kernel function variance_weighted_gaussian_kernel_batched!(output, input, variance, sigma, winsize, nrows, ncols)
+@kernel function variance_weighted_gaussian_kernel_batched!(
+        output, input, variance, sigma, winsize, nrows, ncols,
+    )
     i, j, f = @index(Global, NTuple)
 
     # Window bounds
@@ -310,7 +320,10 @@ function convolve_variance_weighted(
         for frame in 1:nframes
             input_frame = @view imagestack[:, :, 1, frame]
             output_frame = @view filtered[:, :, 1, frame]
-            kernel!(output_frame, input_frame, variance_map, sigma, winsize, ndrange = (nrows, ncols))
+            kernel!(
+                output_frame, input_frame, variance_map, sigma, winsize,
+                ndrange = (nrows, ncols),
+            )
         end
 
         KernelAbstractions.synchronize(backend)
@@ -334,7 +347,9 @@ Convolve imagestack with given kernel using NNlib.
 # Returns
 - `filtered_stack`: Convolved image stack
 """
-function convolve(imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; use_gpu = false)
+function convolve(
+        imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; use_gpu = false,
+    )
     # Reshape kernel to NNlib format: (height, width, input_channels, output_channels)
     weights = reshape(kernel, size(kernel)..., 1, 1)
 

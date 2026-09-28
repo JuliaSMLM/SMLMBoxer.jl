@@ -86,11 +86,13 @@ end
     expected_corner = 1.0f0 + 0.01f0 * 37 + 0.001f0 * 57
     @test roi_camera.readnoise[1, 1] ≈ expected_corner
 
-    # Check center: roi_readnoise[4,4] should be readnoise_map[40, 60] = 1.0 + 0.40 + 0.060 = 1.46
+    # Check center: roi_readnoise[4,4] should be readnoise_map[40, 60]
+    # = 1.0 + 0.40 + 0.060 = 1.46
     expected_center = 1.0f0 + 0.01f0 * 40 + 0.001f0 * 60
     @test roi_camera.readnoise[4, 4] ≈ expected_center
 
-    # Verify NOT transposed: if wrongly indexed, we'd get readnoise_map[57, 37] which doesn't exist
+    # Verify NOT transposed: if wrongly indexed, we'd get readnoise_map[57, 37] which
+    # doesn't exist
     # (would error) or readnoise_map[col, row] giving wrong values
     # Check opposite corner: roi_readnoise[7,7] should be readnoise_map[43, 63]
     expected_opposite = 1.0f0 + 0.01f0 * 43 + 0.001f0 * 63

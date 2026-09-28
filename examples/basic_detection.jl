@@ -205,7 +205,11 @@ if length(roi_batch_noisy) > 0
         x_corner = roi_batch_noisy.x_corners[i]
         y_corner = roi_batch_noisy.y_corners[i]
         frame = roi_batch_noisy.frame_indices[i]
-        println(@sprintf("    ROI %d: corner=(%3d, %3d), frame=%d", i, x_corner, y_corner, frame))
+        println(
+            @sprintf(
+                "    ROI %d: corner=(%3d, %3d), frame=%d", i, x_corner, y_corner, frame,
+            )
+        )
     end
     println()
 end

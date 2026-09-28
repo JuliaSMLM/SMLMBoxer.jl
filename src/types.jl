@@ -24,9 +24,11 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 
 ## Backend Parameters
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
-- `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback (default: 300.0)
+- `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback
+  (default: 300.0)
 - `gpu_timeout::Float64`: Max wait for GPU in :gpu mode (default: Inf)
-- `on_wait::Union{Function,Nothing}`: Optional callback `(elapsed, available, required) -> nothing` for GPU wait progress (default: nothing)
+- `on_wait::Union{Function,Nothing}`: Optional callback `(elapsed, available, required) ->
+  nothing` for GPU wait progress (default: nothing)
 
 # Examples
 ```julia
@@ -96,7 +98,8 @@ end
 function Base.show(io::IO, info::BoxesInfo)
     elapsed_ms = info.elapsed_s * 1000
     mem_kb = info.memory_per_batch / 1024
-    mem_str = mem_kb >= 1024 ? "$(round(mem_kb / 1024, digits = 1)) MB" : "$(round(mem_kb, digits = 1)) KB"
+    mem_str = mem_kb >= 1024 ?
+        "$(round(mem_kb / 1024, digits = 1)) MB" : "$(round(mem_kb, digits = 1)) KB"
     return print(io, "BoxesInfo($(info.n_rois) ROIs, $(round(elapsed_ms, digits = 1)) ms, $(info.backend), $(info.n_batches) batches × $(info.batch_size), $(mem_str)/batch)")
 end
 
@@ -172,11 +175,16 @@ The peak after filtering is:
     I_filtered = N / (2π σ_eff²)  [photons/pixel]
 
 The DoG response (small - large Gaussian) has a lower peak than the small Gaussian alone.
-For sigma_large = 2×sigma_small, the DoG peak is approximately 0.65× the small Gaussian peak.
+For sigma_large = 2×sigma_small, the DoG peak is approximately 0.65× the small Gaussian
+peak.
 
 For raw camera data in ADU, the threshold is scaled by effective_gain = QE × gain.
 """
-function photons_to_dog_threshold(min_photons::Real, psf_sigma::Real; effective_gain::Real = 1.0)
+function photons_to_dog_threshold(
+        min_photons::Real,
+        psf_sigma::Real;
+        effective_gain::Real = 1.0
+    )
     # DoG filter uses sigma_small = 1.0 × psf_sigma
     sigma_small = 1.0 * psf_sigma
 
@@ -210,7 +218,8 @@ When psf_sigma is provided:
 - Converted to pixels using camera pixel size
 - sigma_small = 1.0 × psf_sigma_pixels (automatically calculated)
 - sigma_large = 2.0 × psf_sigma_pixels (automatically calculated)
-- minval = photons_to_dog_threshold(min_photons, psf_sigma_pixels) (automatically calculated)
+- minval = photons_to_dog_threshold(min_photons, psf_sigma_pixels) (automatically
+  calculated)
 
 # Advanced Interface (Direct Control)
 - `sigma_small::Real`: Small Gaussian sigma in pixels (default: 1.0)
@@ -266,7 +275,8 @@ mutable struct GetBoxesArgs
                 psf_sigma_pixels = psf_sigma / pixel_size_μm
             else
                 error(
-                    "psf_sigma in physical units (microns) requires camera to be provided. " *
+                    "psf_sigma in physical units (microns) requires camera to be provided. "
+                        *
                         "Either provide a camera or use the advanced interface with sigma_small/sigma_large in pixels."
                 )
             end
@@ -274,7 +284,9 @@ mutable struct GetBoxesArgs
             σ_small = Float32(1.0 * psf_sigma_pixels)
             σ_large = Float32(2.0 * psf_sigma_pixels)
             effective_gain = get_effective_gain(camera)
-            min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels; effective_gain = effective_gain)
+            min_val = photons_to_dog_threshold(
+                min_photons, psf_sigma_pixels; effective_gain = effective_gain,
+            )
         else
             # Direct control interface
             σ_small = Float32(sigma_small !== nothing ? sigma_small : 1.0)
@@ -285,7 +297,8 @@ mutable struct GetBoxesArgs
         # Validate backend
         backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
-        # use_gpu is determined later in _getboxes_impl based on backend and memory availability
+        # use_gpu is determined later in _getboxes_impl based on backend and memory
+        # availability
         initial_use_gpu = backend != :cpu
 
         return new(
@@ -348,10 +361,14 @@ function extract_camera_roi(camera::SCMOSCamera{T}, row_range, col_range) where 
     # Handle both scalar and per-pixel calibration parameters
     # SMLMData 0.6+: SCMOSCamera calibration arrays use (ny, nx) = (rows, cols) convention
     # This matches Julia's standard image indexing: array[row, col]
-    offset = camera.offset isa AbstractArray ? camera.offset[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.offset
-    gain = camera.gain isa AbstractArray ? camera.gain[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.gain
-    readnoise = camera.readnoise isa AbstractArray ? camera.readnoise[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.readnoise
-    qe = camera.qe isa AbstractArray ? camera.qe[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.qe
+    offset = camera.offset isa AbstractArray ?
+        camera.offset[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.offset
+    gain = camera.gain isa AbstractArray ?
+        camera.gain[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.gain
+    readnoise = camera.readnoise isa AbstractArray ?
+        camera.readnoise[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.readnoise
+    qe = camera.qe isa AbstractArray ?
+        camera.qe[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.qe
 
     return SCMOSCamera(
         camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
@@ -392,8 +409,11 @@ function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int, Int}) wh
         if size(variance_map) == (ncols, nrows) && ncols != nrows
             variance_map = transpose(variance_map)
         end
-        @assert size(variance_map) == imagesize "Readnoise map size $(size(variance_map)) doesn't match image size $imagesize"
-        # Convert to Float32 to match imagestack type (getboxes converts all images to Float32)
+        @assert size(variance_map) == imagesize (
+            "Readnoise map size $(size(variance_map)) doesn't match image size $imagesize"
+        )
+        # Convert to Float32 to match imagestack type (getboxes converts all images to
+        # Float32)
         return Float32.(collect(variance_map))
     else
         # Scalar readnoise: uniform variance (always Float32 to match imagestack)

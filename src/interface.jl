@@ -6,13 +6,13 @@ ROI batch with location tracking and processing metadata.
 
 # Arguments
 - `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
-- `camera::Union{AbstractCamera,Nothing}`: Optional camera object (IdealCamera or SCMOSCamera) from SMLMData.
-  If not provided, a default IdealCamera is created.
+- `camera::Union{AbstractCamera,Nothing}`: Optional camera object (IdealCamera or
+  SCMOSCamera) from SMLMData. If not provided, a default IdealCamera is created.
 
 ## Primary Interface (Recommended - PSF-Aware)
 - `psf_sigma::Real`: PSF sigma in microns (physical units, e.g., 0.13 for 130nm PSF).
-  Automatically converted to pixels using camera pixel size and sets optimal DoG filter parameters.
-  **Requires camera to be provided.**
+  Automatically converted to pixels using camera pixel size and sets optimal DoG filter
+  parameters. **Requires camera to be provided.**
 - `min_photons::Real`: Minimum total photons for detection (default: 500.0).
   Automatically converted to appropriate intensity threshold.
 
@@ -25,7 +25,8 @@ For expert users who want direct control over filter parameters:
 Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 
 ## Other Parameters
-- `boxsize::Int`: Size of the box to cut out around each local maximum in pixels (default: 7).
+- `boxsize::Int`: Size of the box to cut out around each local maximum in pixels
+  (default: 7).
 - `overlap::Real`: Maximum overlap allowed between boxes in pixels (default: 2.0).
 - `backend::Symbol`: Compute backend - `:cpu`, `:gpu`, or `:auto` (default: `:auto`).
   - `:cpu` - Always use CPU
@@ -33,7 +34,8 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
   - `:auto` - Try GPU with timeout, fall back to CPU if memory unavailable
 - `auto_timeout::Real`: Max seconds to wait for GPU memory in `:auto` mode (default: 300.0).
 - `gpu_timeout::Real`: Max seconds to wait for GPU memory in `:gpu` mode (default: Inf).
-- `on_wait::Function`: Optional callback `(elapsed, available, required) -> nothing` for wait progress.
+- `on_wait::Function`: Optional callback `(elapsed, available, required) -> nothing` for
+  wait progress.
 
 # Returns
 Tuple of `(ROIBatch, BoxesInfo)`:
@@ -65,12 +67,13 @@ When using the PSF-aware interface with `psf_sigma` (in microns):
 - psf_sigma is converted to pixels using camera pixel size
 - sigma_small = 1.0 × psf_sigma_pixels (matches PSF for optimal blob detection)
 - sigma_large = 2.0 × psf_sigma_pixels (background suppression)
-- minval is automatically calculated from min_photons accounting for PSF spreading and DoG response
+- minval is automatically calculated from min_photons accounting for PSF spreading and DoG
+  response
 
 ## Variance-Weighted Filtering (sCMOS)
 
-When an SCMOSCamera is provided, the package uses **variance-weighted filtering** based on the
-SMITE algorithm. Each pixel's contribution to the convolution is weighted by:
+When an SCMOSCamera is provided, the package uses **variance-weighted filtering** based on
+the SMITE algorithm. Each pixel's contribution to the convolution is weighted by:
 
     weight = gaussian_kernel / variance
 
@@ -78,10 +81,12 @@ where variance = readnoise². This implements optimal inverse variance weighting
 - Low-noise pixels receive high weight (strong influence on detection)
 - High-noise pixels receive low weight (reduced influence, avoiding false positives)
 
-This significantly improves detection sensitivity in sCMOS data with spatially-varying noise.
+This significantly improves detection sensitivity in sCMOS data with spatially-varying
+noise.
 
-**GPU Acceleration:** Variance-weighted filtering uses KernelAbstractions.jl for device-agnostic
-computation. The same kernel code runs on both CPU and GPU, automatically selected based on `backend`.
+**GPU Acceleration:** Variance-weighted filtering uses KernelAbstractions.jl for
+device-agnostic computation. The same kernel code runs on both CPU and GPU, automatically
+selected based on `backend`.
 This provides GPU acceleration for sCMOS cameras (10-100x speedup on large images).
 
 ## Standard Filtering (IdealCamera or no camera)
@@ -125,9 +130,14 @@ for roi in roi_batch
 end
 ```
 """
-function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera, Nothing}, config::BoxerConfig)
+function getboxes(
+        imagestack::AbstractArray{<:Real},
+        camera::Union{AbstractCamera, Nothing},
+        config::BoxerConfig
+    )
     # Convert to Float32 for type stability throughout pipeline
-    imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
+    imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack :
+        Float32.(imagestack)
 
     # Create args from config
     args = GetBoxesArgs(;
@@ -182,7 +192,8 @@ function getboxes(
 end
 
 """
-    _process_with_batching(imagestack, args, kernelsize, max_free_mem; use_gpu, batch_cleanup=nothing)
+    _process_with_batching(imagestack, args, kernelsize, max_free_mem; use_gpu,
+        batch_cleanup=nothing)
 
 Process imagestack with memory-aware batching. Handles both single-batch (fits in memory)
 and multi-batch (too large) cases.
@@ -209,13 +220,16 @@ function _process_with_batching(
     if memory_required <= max_free_mem
         # Single batch: process whole stack
         filtered_stack = dog_filter(imagestack, args; use_gpu)
-        coords = findlocalmax(filtered_stack, kernelsize; minval = args.minval, use_gpu = use_gpu)
+        coords = findlocalmax(
+            filtered_stack, kernelsize; minval = args.minval, use_gpu = use_gpu,
+        )
         batch_size = size(imagestack, 4)
         n_batches = 1
         memory_per_batch = memory_required
     else
         # Multi-batch: split into smaller chunks
-        memory_per_frame = size(imagestack, 1) * size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
+        memory_per_frame = size(imagestack, 1) * size(imagestack, 2) *
+            sizeof(eltype(imagestack)) * n_copies
         batch_size = max(1, Int(floor(max_free_mem / memory_per_frame)))
         n_images = size(imagestack, 4)
         n_batches = Int(ceil(n_images / batch_size))
@@ -228,7 +242,9 @@ function _process_with_batching(
             end_idx = min(i * batch_size, n_images)
             batch = imagestack[:, :, :, start_idx:end_idx]
             filtered_batch = dog_filter(batch, args; use_gpu)
-            coords_batch = findlocalmax(filtered_batch, kernelsize; minval = args.minval, use_gpu = use_gpu)
+            coords_batch = findlocalmax(
+                filtered_batch, kernelsize; minval = args.minval, use_gpu = use_gpu,
+            )
 
             # Offset frame indices to actual frame numbers
             frame_offset = start_idx - 1
@@ -370,7 +386,10 @@ function _getboxes_impl(args::GetBoxesArgs)
 
     roi_batch = ROIBatch(boxstack, x_corners, y_corners, frame_indices, camera)
     elapsed_s = (time_ns() - start_ns) / 1.0e9
-    info = BoxesInfo(actual_backend, elapsed_s, device_id, n_rois, batch_size, n_batches, memory_per_batch)
+    info = BoxesInfo(
+        actual_backend, elapsed_s, device_id, n_rois, batch_size, n_batches,
+        memory_per_batch,
+    )
 
     return (roi_batch, info)
 end

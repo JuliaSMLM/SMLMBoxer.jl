@@ -157,7 +157,8 @@ end
     @test size(roi_batch.data, 3) >= 1
 
     # Verify the corner is correct
-    # For boxsize=11 and center at (row=50, col=50): corner = (50 - 11÷2, 50 - 11÷2) = (45, 45)
+    # For boxsize=11 and center at (row=50, col=50): corner = (50 - 11÷2, 50 - 11÷2) =
+    # (45, 45)
     @test roi_batch.x_corners[1] == 45  # x (col)
     @test roi_batch.y_corners[1] == 45  # y (row)
 
@@ -193,7 +194,9 @@ end
     @test info isa BoxesInfo
 
     # Advanced config (sigma_small/sigma_large)
-    config_adv = BoxerConfig(sigma_small = 1.5, sigma_large = 3.0, minval = 0.1, boxsize = 7, backend = :cpu)
+    config_adv = BoxerConfig(
+        sigma_small = 1.5, sigma_large = 3.0, minval = 0.1, boxsize = 7, backend = :cpu,
+    )
     @test config_adv.psf_sigma === nothing
     @test config_adv.sigma_small == 1.5
     @test config_adv.backend == :cpu

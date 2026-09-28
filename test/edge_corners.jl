@@ -1,10 +1,12 @@
 # Boxes near the image edge are shifted inward so every box lies fully inside the image and
-# still contains its peak: corners are the centered corner clamped to [1, img_size - boxsize + 1].
+# still contains its peak: corners are the centered corner clamped to
+# [1, img_size - boxsize + 1].
 using Test, SMLMBoxer, SMLMData
 
 img_size = 50
 boxsize = 11
-peaks = [(r, c) for r in (5, 25, 46) for c in (5, 25, 46)]  # both clamps, edge centers, center
+# both clamps, edge centers, center
+peaks = [(r, c) for r in (5, 25, 46) for c in (5, 25, 46)]
 
 image = zeros(Float32, img_size, img_size)
 for (r, c) in peaks
@@ -28,6 +30,10 @@ for (r, c) in peaks
     end
     @test i !== nothing
     i === nothing && continue
-    @test (roi_batch.x_corners[i], roi_batch.y_corners[i]) == (clampcorner(c), clampcorner(r))
-    @test roi_batch.data[r - roi_batch.y_corners[i] + 1, c - roi_batch.x_corners[i] + 1, i] == 100.0f0
+    @test (roi_batch.x_corners[i], roi_batch.y_corners[i]) ==
+        (clampcorner(c), clampcorner(r))
+    @test roi_batch.data[
+        r - roi_batch.y_corners[i] + 1, c - roi_batch.x_corners[i] + 1, i,
+    ] == 100.0f0
+
 end

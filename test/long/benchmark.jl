@@ -47,7 +47,9 @@ end
 
 Create synthetic image stack with known number of Gaussian spots.
 """
-function create_synthetic_image(nx, ny, nframes, nspots_per_frame; sigma = 2.0, intensity = 100.0)
+function create_synthetic_image(
+        nx, ny, nframes, nspots_per_frame; sigma = 2.0, intensity = 100.0,
+    )
     image = zeros(Float32, nx, ny, nframes)
     expected_coords = []
 
@@ -77,7 +79,10 @@ end
 
 Benchmark getboxes with warmup and multiple runs.
 """
-function benchmark_getboxes(image, camera; backend::Symbol = :cpu, nwarmup = WARMUP_ITERATIONS, nruns = BENCHMARK_RUNS)
+function benchmark_getboxes(
+        image, camera; backend::Symbol = :cpu, nwarmup = WARMUP_ITERATIONS,
+        nruns = BENCHMARK_RUNS,
+    )
     # Warmup
     for _ in 1:nwarmup
         (result, _) = getboxes(
@@ -214,7 +219,8 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
         else
             @printf(
                 "│ %-14s │ %-6s │ %-12s │ %8d │ %8d │ %12.2f │\n",
-                r.config.label, cam_str, size_str, r.expected_spots, r.cpu_found, r.cpu_throughput
+                r.config.label, cam_str, size_str, r.expected_spots, r.cpu_found,
+                r.cpu_throughput
             )
         end
     end
@@ -243,11 +249,21 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
 
     # Detection accuracy
     cpu_accuracies = [(r.cpu_found / r.expected_spots * 100) for r in results]
-    println(@sprintf("  CPU detection rate: %.1f%% ± %.1f%%", mean(cpu_accuracies), std(cpu_accuracies)))
+    println(
+        @sprintf(
+            "  CPU detection rate: %.1f%% ± %.1f%%",
+            mean(cpu_accuracies), std(cpu_accuracies)
+        )
+    )
 
     if has_cuda
         gpu_accuracies = [(r.gpu_found / r.expected_spots * 100) for r in results]
-        println(@sprintf("  GPU detection rate: %.1f%% ± %.1f%%", mean(gpu_accuracies), std(gpu_accuracies)))
+        println(
+            @sprintf(
+                "  GPU detection rate: %.1f%% ± %.1f%%",
+                mean(gpu_accuracies), std(gpu_accuracies)
+            )
+        )
 
         # Check if CPU and GPU give same results
         same_detections = all(r.cpu_found == r.gpu_found for r in results)
@@ -260,7 +276,8 @@ function print_benchmark_table(results::Vector{BenchmarkResult}, has_cuda::Bool)
                     println(
                         @sprintf(
                             "    - %s: CPU=%d, GPU=%d (diff=%d)",
-                            r.config.label, r.cpu_found, r.gpu_found, r.gpu_found - r.cpu_found
+                            r.config.label, r.cpu_found, r.gpu_found,
+                            r.gpu_found - r.cpu_found
                         )
                     )
                 end
@@ -298,7 +315,9 @@ function run_comprehensive_benchmark()
     println("\nRunning benchmarks on $(length(configs)) configurations...")
     if has_cuda
         println("GPU detected: ", CUDA.name(CUDA.device()))
-        println("GPU memory: ", round(CUDA.totalmem(CUDA.device()) / 1.0e9, digits = 2), " GB")
+        println(
+            "GPU memory: ", round(CUDA.totalmem(CUDA.device()) / 1.0e9, digits = 2), " GB",
+        )
     else
         println("No GPU detected - CPU only")
     end

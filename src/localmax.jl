@@ -8,13 +8,17 @@ Generate an image highlighting the local maxima using NNlib max pooling.
 - `kernelsize`: The size of the kernel used to identify local maxima.
 
 # Keyword Arguments
-- `minval`: The minimum value a local maximum must have to be considered valid (default: 0.0).
+- `minval`: The minimum value a local maximum must have to be considered valid
+  (default: 0.0).
 - `use_gpu`: Whether or not to use GPU acceleration (default: false).
 
 # Returns
 - `localmaximage`: An image with local maxima highlighted.
 """
-function genlocalmaximage(imagestack::AbstractArray{<:Real}, kernelsize::Int; minval::Real = 0.0, use_gpu = false)
+function genlocalmaximage(
+        imagestack::AbstractArray{<:Real}, kernelsize::Int;
+        minval::Real = 0.0, use_gpu = false,
+    )
     poolsize = (kernelsize, kernelsize)
     # NNlib padding: (pad_left, pad_right, pad_top, pad_bottom)
     # For "same" output size, need asymmetric padding for even kernels
@@ -58,13 +62,17 @@ Find the coordinates of local maxima in an image.
 - `kernelsize`: The size of the kernel used to identify local maxima.
 
 # Keyword Arguments
-- `minval`: The minimum value a local maximum must have to be considered valid (default: 0.0).
+- `minval`: The minimum value a local maximum must have to be considered valid
+  (default: 0.0).
 - `use_gpu`: Whether or not to use GPU acceleration (default: false).
 
 # Returns
 - `coords`: The coordinates of the local maxima in the image.
 """
-function findlocalmax(imagestack::AbstractArray{<:Real}, kernelsize::Int; minval::Real = 0.0f0, use_gpu = false)
+function findlocalmax(
+        imagestack::AbstractArray{<:Real}, kernelsize::Int;
+        minval::Real = 0.0f0, use_gpu = false,
+    )
     localmaximage = genlocalmaximage(imagestack, kernelsize; minval, use_gpu)
     if localmaximage isa CuArray
         # GPU sparse extraction: transfers ~1 MB instead of full array (~1 GB)

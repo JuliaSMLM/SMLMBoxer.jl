@@ -127,9 +127,11 @@ function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
                 for j in (i + 1):ncoords
                     if keep[j]
                         cj = coords[f][j, :]
-                        dist = sqrt(sum((ci[1:2] - cj[1:2]) .^ 2)) # Only compare the x and y coordinates
+                        # Only compare the x and y coordinates
+                        dist = sqrt(sum((ci[1:2] - cj[1:2]) .^ 2))
                         if dist <= overlap
-                            if ci[4] < cj[4] # Use the 4th column of ci and cj for intensity comparison
+                            # Use the 4th column of ci and cj for intensity comparison
+                            if ci[4] < cj[4]
                                 keep[i] = false
                                 break
                             else

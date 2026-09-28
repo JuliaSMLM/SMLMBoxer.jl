@@ -145,7 +145,9 @@ result_weighted_cpu = getboxes(
     use_gpu = false
 )
 
-println("Variance-weighted detection (CPU) found $(result_weighted_cpu.metadata.ndetections) spots")
+println(
+    "Variance-weighted detection (CPU) found $(result_weighted_cpu.metadata.ndetections) spots"
+)
 println("Note: Spots in low-noise regions are preferentially detected")
 println("High-noise regions (10x readnoise) are down-weighted during filtering")
 println()
@@ -166,7 +168,9 @@ if CUDA.functional()
         use_gpu = true  # KernelAbstractions backend automatically selects GPU
     )
 
-    println("Variance-weighted detection (GPU) found $(result_weighted_gpu.metadata.ndetections) spots")
+    println(
+        "Variance-weighted detection (GPU) found $(result_weighted_gpu.metadata.ndetections) spots"
+    )
     println("GPU acceleration via KernelAbstractions.jl")
     println("Same kernel code runs on CPU/GPU (device-agnostic)")
 else
