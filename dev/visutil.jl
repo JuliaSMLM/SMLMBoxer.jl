@@ -18,7 +18,7 @@ squeeze(a) # returns a 2x2x2 array
 function squeeze(im)
     while any(size(im) .== 1)
         dim, = findall(i -> size(im, i) == 1, 1:ndims(im))
-        im = dropdims(im, dims=dim)
+        im = dropdims(im, dims = dim)
     end
     return im
 end
@@ -46,7 +46,7 @@ im = rand(100,100,20)
 showscaled(im) # Shows first 3 z slices, zoomed 4x
 ```
 """
-function showscaled(im; nz=3, zoom=4)
+function showscaled(im; nz = 3, zoom = 4)
     im = squeeze(im)
     if ndims(im) == 3
         maxz = min(size(im, 3), nz)
@@ -61,8 +61,7 @@ function showscaled(im; nz=3, zoom=4)
     # Scale the image
     im_scaled = (im .- im_min) ./ (im_max - im_min)
 
-    im_scaled = imresize(im_scaled, ratio=zoom)
+    im_scaled = imresize(im_scaled, ratio = zoom)
     # Show the image
-    Gray.(im_scaled)
+    return Gray.(im_scaled)
 end
-

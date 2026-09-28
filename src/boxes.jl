@@ -33,13 +33,15 @@ function getboxstack(imagestack, coords, kwargs::GetBoxesArgs)
         im = Int(coords[i, 3])
         box = @view boxstack[:, :, i]
         row_min, col_min, _ = fillbox!(box, imagestack, row, col, im, kwargs.boxsize)
-        boxcoords[i,:] = [row_min, col_min, im]
+        boxcoords[i, :] = [row_min, col_min, im]
 
         # Extract camera ROI if camera is provided
         if kwargs.camera !== nothing
             row_max = row_min + kwargs.boxsize - 1
             col_max = col_min + kwargs.boxsize - 1
-            camera_rois[i] = extract_camera_roi(kwargs.camera, row_min:row_max+1, col_min:col_max+1)
+            camera_rois[i] = extract_camera_roi(
+                kwargs.camera, row_min:(row_max + 1), col_min:(col_max + 1),
+            )
         end
     end
 
@@ -60,7 +62,10 @@ Fill a box with a crop from the imagestack.
 # Returns
 - `boxcoords`: Upper Left corners of boxes N x (row, col, im)
 """
-function fillbox!(box::AbstractArray{<:Real,2}, imagestack::AbstractArray{<:Real,4}, row::Int, col::Int, im::Int, boxsize::Int)
+function fillbox!(
+        box::AbstractArray{<:Real, 2}, imagestack::AbstractArray{<:Real, 4},
+        row::Int, col::Int, im::Int, boxsize::Int,
+    )
     # Get the size of the image stack
     (nrows, ncols, ~, nimages) = size(imagestack)
 

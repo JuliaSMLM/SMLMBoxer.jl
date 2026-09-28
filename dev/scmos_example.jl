@@ -25,13 +25,14 @@ camera = IdealCamera(
 )
 
 # Detect boxes
-result = getboxes(image, camera;
-    boxsize=7,
-    overlap=2.0,
-    sigma_small=1.0,
-    sigma_large=2.0,
-    minval=0.1,
-    use_gpu=false
+result = getboxes(
+    image, camera;
+    boxsize = 7,
+    overlap = 2.0,
+    sigma_small = 1.0,
+    sigma_large = 2.0,
+    minval = 0.1,
+    use_gpu = false
 )
 
 println("Detected $(result.metadata.ndetections) spots")
@@ -55,13 +56,14 @@ camera_scmos = SCMOSCamera(
     qe = 0.9f0         # quantum efficiency
 )
 
-result_scmos = getboxes(image, camera_scmos;
-    boxsize=7,
-    overlap=2.0,
-    sigma_small=1.0,
-    sigma_large=2.0,
-    minval=0.1,
-    use_gpu=false
+result_scmos = getboxes(
+    image, camera_scmos;
+    boxsize = 7,
+    overlap = 2.0,
+    sigma_small = 1.0,
+    sigma_large = 2.0,
+    minval = 0.1,
+    use_gpu = false
 )
 
 println("Detected $(result_scmos.metadata.ndetections) spots")
@@ -90,18 +92,22 @@ camera_scmos_pp = SCMOSCamera(
     qe = qe_map
 )
 
-result_scmos_pp = getboxes(image, camera_scmos_pp;
-    boxsize=7,
-    overlap=2.0,
-    sigma_small=1.0,
-    sigma_large=2.0,
-    minval=0.1,
-    use_gpu=false
+result_scmos_pp = getboxes(
+    image, camera_scmos_pp;
+    boxsize = 7,
+    overlap = 2.0,
+    sigma_small = 1.0,
+    sigma_large = 2.0,
+    minval = 0.1,
+    use_gpu = false
 )
 
 println("Detected $(result_scmos_pp.metadata.ndetections) spots")
 println("Camera ROI type: $(typeof(result_scmos_pp.camera_rois[1]))")
-println("Camera ROI has per-pixel calibration: $(result_scmos_pp.camera_rois[1].offset isa AbstractArray)")
+println(
+    "Camera ROI has per-pixel " *
+        "calibration: $(result_scmos_pp.camera_rois[1].offset isa AbstractArray)"
+)
 if result_scmos_pp.camera_rois[1].offset isa AbstractArray
     println("Camera ROI offset shape: $(size(result_scmos_pp.camera_rois[1].offset))")
     println("Expected shape for 7x7 box: (7, 7)")
@@ -132,16 +138,20 @@ demo_camera = SCMOSCamera(
 )
 
 # Detect with variance weighting (CPU)
-result_weighted_cpu = getboxes(demo_image, demo_camera;
-    boxsize=7,
-    overlap=2.0,
-    sigma_small=1.0,
-    sigma_large=2.0,
-    minval=1.0,
-    use_gpu=false
+result_weighted_cpu = getboxes(
+    demo_image, demo_camera;
+    boxsize = 7,
+    overlap = 2.0,
+    sigma_small = 1.0,
+    sigma_large = 2.0,
+    minval = 1.0,
+    use_gpu = false
 )
 
-println("Variance-weighted detection (CPU) found $(result_weighted_cpu.metadata.ndetections) spots")
+println(
+    "Variance-weighted detection (CPU) found $(result_weighted_cpu.metadata.ndetections) " *
+        "spots"
+)
 println("Note: Spots in low-noise regions are preferentially detected")
 println("High-noise regions (10x readnoise) are down-weighted during filtering")
 println()
@@ -152,16 +162,20 @@ println("="^50)
 
 if CUDA.functional()
     # Same detection but with GPU acceleration via KernelAbstractions
-    result_weighted_gpu = getboxes(demo_image, demo_camera;
-        boxsize=7,
-        overlap=2.0,
-        sigma_small=1.0,
-        sigma_large=2.0,
-        minval=1.0,
-        use_gpu=true  # KernelAbstractions backend automatically selects GPU
+    result_weighted_gpu = getboxes(
+        demo_image, demo_camera;
+        boxsize = 7,
+        overlap = 2.0,
+        sigma_small = 1.0,
+        sigma_large = 2.0,
+        minval = 1.0,
+        use_gpu = true  # KernelAbstractions backend automatically selects GPU
     )
 
-    println("Variance-weighted detection (GPU) found $(result_weighted_gpu.metadata.ndetections) spots")
+    println(
+        "Variance-weighted detection (GPU) " *
+            "found $(result_weighted_gpu.metadata.ndetections) spots"
+    )
     println("GPU acceleration via KernelAbstractions.jl")
     println("Same kernel code runs on CPU/GPU (device-agnostic)")
 else
@@ -174,30 +188,32 @@ println()
 println("Example 4: Workflow for GaussMLE integration")
 println("="^50)
 
-println("""
-# Complete workflow:
-# 1. Detect boxes with SMLMBoxer
-result = getboxes(imagestack, scmos_camera; boxsize=7)
+println(
+    """
+    # Complete workflow:
+    # 1. Detect boxes with SMLMBoxer
+    result = getboxes(imagestack, scmos_camera; boxsize=7)
 
-# 2. Pass to GaussMLE for fitting (kernel-abstract branch)
-using GaussMLE
-fitter = GaussMLEFitter(
-    GaussianXYNB,           # PSF model
-    result.camera_rois;      # sCMOS calibration for each box
-    device=:gpu
+    # 2. Pass to GaussMLE for fitting (kernel-abstract branch)
+    using GaussMLE
+    fitter = GaussMLEFitter(
+        GaussianXYNB,           # PSF model
+        result.camera_rois;      # sCMOS calibration for each box
+        device=:gpu
+    )
+
+    # 3. Fit the boxes
+    fitted_smld = fit(fitter, result.boxes, result.coords_microns)
+    # Returns: BasicSMLD{Float32, Emitter2DFit{Float32}}
+
+    # 4. Access fitted emitters
+    for emitter in fitted_smld.emitters
+        println("Position: (\$(emitter.x), \$(emitter.y)) μm")
+        println("Photons: \$(emitter.photons)")
+        println("Uncertainty: (\$(emitter.σ_x), \$(emitter.σ_y)) μm")
+    end
+    """
 )
-
-# 3. Fit the boxes
-fitted_smld = fit(fitter, result.boxes, result.coords_microns)
-# Returns: BasicSMLD{Float32, Emitter2DFit{Float32}}
-
-# 4. Access fitted emitters
-for emitter in fitted_smld.emitters
-    println("Position: (\$(emitter.x), \$(emitter.y)) μm")
-    println("Photons: \$(emitter.photons)")
-    println("Uncertainty: (\$(emitter.σ_x), \$(emitter.σ_y)) μm")
-end
-""")
 
 println()
 println("="^50)

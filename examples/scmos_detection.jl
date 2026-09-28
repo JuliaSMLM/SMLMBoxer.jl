@@ -37,7 +37,7 @@ readnoise_map = zeros(Float32, n_pixels, n_pixels)
 for i in 1:n_pixels
     for j in 1:n_pixels
         # Create gradient: low noise on left (2 e⁻), high noise on right (20 e⁻)
-        gradient_factor = (j-1) / (n_pixels-1)
+        gradient_factor = (j - 1) / (n_pixels - 1)
         readnoise_map[i, j] = 2.0f0 + 18.0f0 * gradient_factor
     end
 end
@@ -53,9 +53,12 @@ camera_scmos = SCMOSCamera(
 )
 
 println("  Camera: $(n_pixels)×$(n_pixels) @ $(pixel_size) μm/pixel")
-println("  Readnoise range: $(round(minimum(readnoise_map), digits=1)) - $(round(maximum(readnoise_map), digits=1)) e⁻")
-println("  Low-noise region: Left side (x < $(box_size/2) μm)")
-println("  High-noise region: Right side (x > $(box_size/2) μm)")
+println(
+    "  Readnoise range: $(round(minimum(readnoise_map), digits = 1)) " *
+        "- $(round(maximum(readnoise_map), digits = 1)) e⁻"
+)
+println("  Low-noise region: Left side (x < $(box_size / 2) μm)")
+println("  High-noise region: Right side (x > $(box_size / 2) μm)")
 println()
 
 # ============================================================================
@@ -68,27 +71,31 @@ emitters = Emitter2DFit{Float64}[]
 # Low-noise region (left third)
 n_low_noise = 25
 for _ in 1:n_low_noise
-    x = Float64(box_size/6 + (box_size/3 - 2.0) * rand())  # Left third
+    x = Float64(box_size / 6 + (box_size / 3 - 2.0) * rand())  # Left third
     y = Float64(2.0 + (box_size - 4.0) * rand())
     photons = 800.0 + 400.0 * rand()
 
-    push!(emitters, Emitter2DFit{Float64}(
-        x, y, photons, 10.0, 0.0, 0.0, 0.0, 0.0,
-        1, 1, 0, length(emitters)+1
-    ))
+    push!(
+        emitters, Emitter2DFit{Float64}(
+            x, y, photons, 10.0, 0.0, 0.0, 0.0, 0.0,
+            1, 1, 0, length(emitters) + 1
+        )
+    )
 end
 
 # High-noise region (right third)
 n_high_noise = 25
 for _ in 1:n_high_noise
-    x = Float64(5*box_size/6 + (box_size/3 - 2.0) * rand())  # Right third
+    x = Float64(5 * box_size / 6 + (box_size / 3 - 2.0) * rand())  # Right third
     y = Float64(2.0 + (box_size - 4.0) * rand())
     photons = 800.0 + 400.0 * rand()
 
-    push!(emitters, Emitter2DFit{Float64}(
-        x, y, photons, 10.0, 0.0, 0.0, 0.0, 0.0,
-        1, 1, 0, length(emitters)+1
-    ))
+    push!(
+        emitters, Emitter2DFit{Float64}(
+            x, y, photons, 10.0, 0.0, 0.0, 0.0, 0.0,
+            1, 1, 0, length(emitters) + 1
+        )
+    )
 end
 
 println("  Low-noise region: $(n_low_noise) emitters")
@@ -105,10 +112,15 @@ smld = BasicSMLD(emitters, camera_scmos, 1, 1)
 psf = GaussianPSF(0.13f0)  # σ = 130 nm
 
 println("  Generating noisy sCMOS image...")
-img_scmos = Float32.(gen_images(smld, psf, camera_noise=true, bg=10.0))
+img_scmos = Float32.(gen_images(smld, psf, camera_noise = true, bg = 10.0))
 
 println("  Image size: $(size(img_scmos))")
-println("  Value range: [$(round(minimum(img_scmos), digits=1)), $(round(maximum(img_scmos), digits=1))] ADU")
+println(
+    "  Value range: " *
+        "[$(round(minimum(img_scmos), digits = 1))," *
+        " $(round(maximum(img_scmos), digits = 1))]" *
+        " ADU"
+)
 println()
 
 # ============================================================================
@@ -118,11 +130,12 @@ println("Step 4: Detecting spots with variance-weighted filtering (PSF-aware)...
 
 # Calculate PSF sigma in pixels
 psf_sigma_pixels = 0.13f0 / pixel_size  # 0.13 μm / 0.1 μm/pixel = 1.3 pixels
-println("  PSF sigma: $(round(psf_sigma_pixels, digits=2)) pixels")
+println("  PSF sigma: $(round(psf_sigma_pixels, digits = 2)) pixels")
 println("  Detection threshold: 500 photons")
 println()
 
-(roi_batch, info_cpu) = getboxes(img_scmos, camera_scmos;
+(roi_batch, info_cpu) = getboxes(
+    img_scmos, camera_scmos;
     psf_sigma = psf_sigma_pixels,  # PSF-aware detection
     min_photons = 500.0,            # Detect emitters with ≥500 photons
     boxsize = 11,                   # Larger box for better fitting
@@ -132,12 +145,13 @@ println()
 t_cpu = info_cpu.elapsed_s
 
 println("  Detected $(length(roi_batch)) spots (CPU)")
-println("  Processing time: $(round(t_cpu * 1000, digits=1)) ms")
+println("  Processing time: $(round(t_cpu * 1000, digits = 1)) ms")
 
 # GPU detection if available
 if CUDA.functional()
     println("  Running GPU detection...")
-    (roi_batch_gpu, info_gpu) = getboxes(img_scmos, camera_scmos;
+    (roi_batch_gpu, info_gpu) = getboxes(
+        img_scmos, camera_scmos;
         psf_sigma = psf_sigma_pixels,
         min_photons = 500.0,
         boxsize = 11,
@@ -147,8 +161,8 @@ if CUDA.functional()
     t_gpu = info_gpu.elapsed_s
 
     println("  Detected $(length(roi_batch_gpu)) spots (GPU, device=$(info_gpu.device_id))")
-    println("  Processing time: $(round(t_gpu * 1000, digits=1)) ms")
-    println("  GPU speedup: $(round(t_cpu/t_gpu, digits=1))x")
+    println("  Processing time: $(round(t_gpu * 1000, digits = 1)) ms")
+    println("  GPU speedup: $(round(t_cpu / t_gpu, digits = 1))x")
 end
 println()
 
@@ -182,16 +196,28 @@ low_noise_detected, high_noise_detected = count_by_region(roi_batch, box_size, p
 
 println("Detection by Region:")
 println("  Low-noise region (left):")
-println(@sprintf("    Expected: %d, Found: %d (%.1f%%)",
-    n_low_noise, low_noise_detected, low_noise_detected/n_low_noise*100))
+println(
+    @sprintf(
+        "    Expected: %d, Found: %d (%.1f%%)",
+        n_low_noise, low_noise_detected, low_noise_detected / n_low_noise * 100
+    )
+)
 println("  High-noise region (right):")
-println(@sprintf("    Expected: %d, Found: %d (%.1f%%)",
-    n_high_noise, high_noise_detected, high_noise_detected/n_high_noise*100))
+println(
+    @sprintf(
+        "    Expected: %d, Found: %d (%.1f%%)",
+        n_high_noise, high_noise_detected, high_noise_detected / n_high_noise * 100
+    )
+)
 println()
 
 println("Overall Detection:")
-println(@sprintf("  Total detected: %d / %d (%.1f%%)",
-    length(roi_batch), length(emitters), length(roi_batch)/length(emitters)*100))
+println(
+    @sprintf(
+        "  Total detected: %d / %d (%.1f%%)",
+        length(roi_batch), length(emitters), length(roi_batch) / length(emitters) * 100
+    )
+)
 println()
 
 # ============================================================================

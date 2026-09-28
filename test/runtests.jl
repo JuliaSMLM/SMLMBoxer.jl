@@ -1,462 +1,148 @@
-using SMLMBoxer
-using SMLMData
-using CUDA
-using Statistics
-using Printf
-using Test
+# Lab test runner (admiral decisions 0008, 0009). Identical in every package: do not edit;
+# declare groups in test_groups.toml and put tests in the group folders instead.
+# GROUP: unset or "Core" runs Core; "QA" or "GPU,Long" runs those; "Everything" runs every
+# declared group whose requirement is met on this machine. LAB_TEST_SUMMARY=<path> writes a
+# TOML summary there.
+using Test, TOML, Pkg
 
-@testset "SMLMBoxer.jl" begin
+const GROUPS = ("Core", "QA", "GPU", "Data", "Long", "Hardware")
+const TESTDIR = @__DIR__
+const PKGROOT = dirname(TESTDIR)
+const CFG = TOML.parsefile(joinpath(TESTDIR, "test_groups.toml"))
 
-    @testset "API without camera" begin
-        # Test image with two bright peaks
-        image = zeros(Float32, 100, 100)
-        image[20, 50] = 10
-        image[30, 60] = 10
+folder(g) = g == "Core" ? TESTDIR : joinpath(TESTDIR, lowercase(g))
+testfiles(g) = sort(
+    [
+        joinpath(folder(g), f) for f in readdir(folder(g))
+            if endswith(f, ".jl") && f != "runtests.jl" && isfile(joinpath(folder(g), f))
+    ]
+)
 
-        # Get boxes without camera (positional interface)
-        (roi_batch, info) = getboxes(image;
-            boxsize=5,
-            overlap=3.0,
-            sigma_small=1.0,
-            sigma_large=2.0,
-            minval=0.1,
-            backend=:cpu
-        )
+# Layout check: a test file must never silently not run.
+for g in keys(CFG)
+    g in GROUPS ||
+        error("test_groups.toml: unknown group $g (allowed: $(join(GROUPS, ", ")))")
+    isdir(folder(g)) && !isempty(testfiles(g)) ||
+        error("group $g is declared but $(folder(g)) has no .jl files")
+end
+for d in readdir(TESTDIR)
+    isdir(joinpath(TESTDIR, d)) || continue
+    any(g -> g != "Core" && haskey(CFG, g) && lowercase(g) == d, GROUPS) ||
+        error("test/$d/ is not the folder of a group declared in test_groups.toml")
+end
 
-        # Test ROIBatch structure
-        @test roi_batch isa ROIBatch
-        @test hasfield(typeof(roi_batch), :data)
-        @test hasfield(typeof(roi_batch), :x_corners)
-        @test hasfield(typeof(roi_batch), :y_corners)
-        @test hasfield(typeof(roi_batch), :frame_indices)
-        @test hasfield(typeof(roi_batch), :camera)
-
-        # Test BoxesInfo structure
-        @test info isa BoxesInfo
-        @test info.backend == :cpu
-        @test info.elapsed_s > 0
-        @test info.device_id == -1  # CPU
-
-        # Should detect two peaks
-        @test size(roi_batch.data) == (5, 5, 2)
-        @test length(roi_batch) == 2
-
-        # Verify correct box locations (x_corners/y_corners are col/row of top-left corner)
-        # For boxsize=5 and center at (row=20, col=50): corner = (50 - 5÷2, 20 - 5÷2) = (48, 18)
-        @test roi_batch.x_corners[1] == 48  # x (col) of first ROI
-        @test roi_batch.y_corners[1] == 18  # y (row) of first ROI
-        @test roi_batch.x_corners[2] == 58  # x (col) of second ROI
-        @test roi_batch.y_corners[2] == 28  # y (row) of second ROI
-        @test roi_batch.frame_indices[1] == 1
-        @test roi_batch.frame_indices[2] == 1
-
-        # Default camera should be created
-        @test roi_batch.camera isa IdealCamera
-    end
-
-    @testset "Overlap removal" begin
-        # Test image with two close bright peaks
-        image = zeros(Float32, 100, 100)
-        image[20, 50] = 20
-        image[21, 51] = 10
-
-        (roi_batch, info) = getboxes(image;
-            boxsize=5,
-            overlap=3.0,
-            sigma_small=1.0,
-            sigma_large=2.0,
-            minval=0.1,
-            backend=:cpu
-        )
-
-        # Should detect only one peak (overlap removed)
-        @test size(roi_batch.data) == (5, 5, 1)
-        @test length(roi_batch) == 1
-
-        # Verify correct box location (should keep brighter peak)
-        # For boxsize=5 and center at (row=20, col=50): corner = (50 - 5÷2, 20 - 5÷2) = (48, 18)
-        @test roi_batch.x_corners[1] == 48  # x (col)
-        @test roi_batch.y_corners[1] == 18  # y (row)
-        @test roi_batch.frame_indices[1] == 1
-
-        # BoxesInfo should be valid
-        @test info isa BoxesInfo
-        @test info.elapsed_s > 0
-    end
-
-    @testset "New API with IdealCamera" begin
-        # Test image with two bright peaks
-        image = zeros(Float32, 100, 100)
-        image[20, 50] = 10
-        image[30, 60] = 10
-
-        # Create an IdealCamera
-        pixel_size = 0.1f0  # microns
-        camera = IdealCamera(
-            1:101,  # pixel range x (need 101 edges for 100 pixels)
-            1:101,  # pixel range y
-            pixel_size  # pixel size
-        )
-
-        # Get boxes with camera
-        (roi_batch, info) = getboxes(image, camera;
-            boxsize=5,
-            overlap=3.0,
-            sigma_small=1.0,
-            sigma_large=2.0,
-            minval=0.1,
-            backend=:cpu
-        )
-
-        # Should detect two peaks
-        @test size(roi_batch.data) == (5, 5, 2)
-        @test length(roi_batch) == 2
-
-        # Check corner positions (top-left corner of ROI)
-        # For boxsize=5 and center at (row=20, col=50): corner = (48, 18)
-        @test roi_batch.x_corners[1] == 48  # x (col) of first ROI
-        @test roi_batch.y_corners[1] == 18  # y (row) of first ROI
-        @test roi_batch.x_corners[2] == 58  # x (col) of second ROI
-        @test roi_batch.y_corners[2] == 28  # y (row) of second ROI
-
-        # Check frame indices
-        @test roi_batch.frame_indices[1] == 1
-        @test roi_batch.frame_indices[2] == 1
-
-        # Check camera is present and correct type
-        @test roi_batch.camera isa IdealCamera
-        @test roi_batch.camera === camera
-
-        # BoxesInfo should be valid
-        @test info isa BoxesInfo
-        @test info.elapsed_s > 0
-    end
-
-    @testset "New API with SCMOSCamera (scalar params)" begin
-        # Test image
-        image = zeros(Float32, 100, 100)
-        image[20, 50] = 10
-
-        # Create SCMOSCamera with scalar parameters
-        pixel_size = 0.1f0
-        camera = SCMOSCamera(
-            100,  # npixels_x
-            100,  # npixels_y
-            pixel_size,  # pixel size
-            5.0f0,  # readnoise
-            offset = 100.0f0,
-            gain = 2.0f0,
-            qe = 0.9f0
-        )
-
-        (roi_batch, info) = getboxes(image, camera;
-            boxsize=5,
-            overlap=3.0,
-            sigma_small=1.0,
-            sigma_large=2.0,
-            minval=0.1,
-            backend=:cpu
-        )
-
-        # Should detect the peak
-        @test size(roi_batch.data, 3) >= 1
-        @test length(roi_batch) >= 1
-
-        # Camera should be SCMOSCamera with correct parameters
-        @test roi_batch.camera isa SCMOSCamera
-        @test roi_batch.camera === camera
-        @test roi_batch.camera.offset == 100.0f0
-        @test roi_batch.camera.gain == 2.0f0
-
-        # BoxesInfo should be valid
-        @test info isa BoxesInfo
-        @test info.elapsed_s > 0
-    end
-
-    @testset "Rectangular SCMOSCamera with per-pixel calibration" begin
-        # Test extract_camera_roi directly with rectangular camera + per-pixel arrays
-        # This verifies the (ny, nx) = (rows, cols) indexing convention in SMLMData 0.6+
-        nrows, ncols = 80, 120
-
-        # Create per-pixel readnoise array matching image convention (ny, nx) = (rows, cols)
-        # Use spatially varying values to verify correct indexing
-        readnoise_map = zeros(Float32, nrows, ncols)
-        for r in 1:nrows, c in 1:ncols
-            readnoise_map[r, c] = 1.0f0 + 0.01f0 * r + 0.001f0 * c  # Unique per pixel
-        end
-
-        pixel_size = 0.1f0
-        camera = SCMOSCamera(
-            ncols,  # npixels_x
-            nrows,  # npixels_y
-            pixel_size,
-            readnoise_map,  # per-pixel readnoise
-            offset = 100.0f0,
-            gain = 2.0f0,
-            qe = 0.9f0
-        )
-
-        # Extract a 7x7 ROI centered around row 40, col 60
-        # ROI spans rows 37:43 (7 pixels), cols 57:63 (7 pixels)
-        # For camera extraction, ranges include the +1 for pixel edges
-        row_range = 37:44  # 8 elements for 7 pixels (edges)
-        col_range = 57:64  # 8 elements for 7 pixels (edges)
-
-        roi_camera = SMLMBoxer.extract_camera_roi(camera, row_range, col_range)
-
-        @test roi_camera isa SCMOSCamera
-        @test roi_camera.readnoise isa AbstractArray
-        @test size(roi_camera.readnoise) == (7, 7)
-
-        # Verify values are from correct region by checking the pattern
-        # Original: readnoise[r,c] = 1.0 + 0.01*r + 0.001*c
-        # ROI starts at row 37, col 57
-        # So roi_readnoise[1,1] should be readnoise_map[37, 57] = 1.0 + 0.37 + 0.057 = 1.427
-        expected_corner = 1.0f0 + 0.01f0 * 37 + 0.001f0 * 57
-        @test roi_camera.readnoise[1, 1] ≈ expected_corner
-
-        # Check center: roi_readnoise[4,4] should be readnoise_map[40, 60] = 1.0 + 0.40 + 0.060 = 1.46
-        expected_center = 1.0f0 + 0.01f0 * 40 + 0.001f0 * 60
-        @test roi_camera.readnoise[4, 4] ≈ expected_center
-
-        # Verify NOT transposed: if wrongly indexed, we'd get readnoise_map[57, 37] which doesn't exist
-        # (would error) or readnoise_map[col, row] giving wrong values
-        # Check opposite corner: roi_readnoise[7,7] should be readnoise_map[43, 63]
-        expected_opposite = 1.0f0 + 0.01f0 * 43 + 0.001f0 * 63
-        @test roi_camera.readnoise[7, 7] ≈ expected_opposite
-    end
-
-    @testset "PSF-aware interface (physical units)" begin
-        # Test image with a bright peak representing an emitter
-        image = zeros(Float32, 100, 100)
-        image[50, 50] = 1000.0  # ~1000 photon peak
-
-        # Create camera
-        pixel_size = 0.1f0  # 100nm pixels
-        camera = IdealCamera(
-            1:101,
-            1:101,
-            pixel_size
-        )
-
-        # Use PSF-aware interface with physical units (microns)
-        psf_sigma_microns = 0.13f0  # 130nm PSF
-        (roi_batch, info) = getboxes(image, camera;
-            psf_sigma = psf_sigma_microns,  # In microns (auto-converts to pixels)
-            min_photons = 500.0,             # Should detect our 1000 photon peak
-            boxsize = 11,
-            backend = :cpu
-        )
-
-        # Should detect the peak
-        @test length(roi_batch) >= 1
-        @test size(roi_batch.data, 3) >= 1
-
-        # Verify the corner is correct
-        # For boxsize=11 and center at (row=50, col=50): corner = (50 - 11÷2, 50 - 11÷2) = (45, 45)
-        @test roi_batch.x_corners[1] == 45  # x (col)
-        @test roi_batch.y_corners[1] == 45  # y (row)
-
-        # BoxesInfo should be valid
-        @test info isa BoxesInfo
-        @test info.elapsed_s > 0
-
-        # Test with higher threshold - should not detect
-        (roi_batch_high, _) = getboxes(image, camera;
-            psf_sigma = psf_sigma_microns,
-            min_photons = 5000.0,  # Way above our peak
-            boxsize = 11,
-            backend = :cpu
-        )
-        @test length(roi_batch_high) == 0
-    end
-
-    @testset "Backward compatibility (old interface)" begin
-        # Verify old interface still works
-        image = zeros(Float32, 100, 100)
-        image[20, 50] = 10
-
-        (roi_batch, info) = getboxes(image;
-            boxsize = 5,
-            sigma_small = 1.0,
-            sigma_large = 2.0,
-            minval = 0.1,
-            backend = :cpu
-        )
-
-        @test length(roi_batch) >= 1
-        @test size(roi_batch.data, 3) >= 1
-
-        # BoxesInfo should be valid
-        @test info isa BoxesInfo
-        @test info.elapsed_s > 0
-    end
-
-    @testset "BoxerConfig calling convention" begin
-        # Test config-based calling
-        image = zeros(Float32, 100, 100)
-        image[50, 50] = 1000.0
-
-        camera = IdealCamera(1:101, 1:101, 0.1f0)
-
-        # PSF-aware config
-        config_psf = BoxerConfig(psf_sigma=0.13, min_photons=500.0, boxsize=11)
-        @test config_psf isa BoxerConfig
-        @test config_psf.psf_sigma == 0.13
-        @test config_psf.boxsize == 11
-
-        (roi_batch, info) = getboxes(image, camera, config_psf)
-        @test length(roi_batch) >= 1
-        @test info isa BoxesInfo
-
-        # Advanced config (sigma_small/sigma_large)
-        config_adv = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=0.1, boxsize=7, backend=:cpu)
-        @test config_adv.psf_sigma === nothing
-        @test config_adv.sigma_small == 1.5
-        @test config_adv.backend == :cpu
-
-        image2 = zeros(Float32, 100, 100)
-        image2[20, 50] = 10
-
-        (roi_batch2, info2) = getboxes(image2, nothing, config_adv)
-        @test info2.backend == :cpu
-
-        # Kwargs should produce same result as config
-        (roi_batch3, info3) = getboxes(image2;
-            sigma_small=1.5, sigma_large=3.0, minval=0.1, boxsize=7, backend=:cpu)
-        @test length(roi_batch2) == length(roi_batch3)
-    end
-
-    @testset "sCMOS variance-weighted detection (per-pixel)" begin
-        # Create image with two spots of equal intensity
-        image = zeros(Float32, 100, 100)
-        image[30, 30] = 100.0  # Spot in low-noise region
-        image[70, 70] = 100.0  # Spot in high-noise region
-
-        # Create per-pixel readnoise map
-        readnoise_map = 2.0f0 .* ones(Float32, 100, 100)
-        # Make one region very noisy
-        readnoise_map[60:80, 60:80] .= 20.0f0  # 10x more noise
-
-        pixel_size = 0.1f0
-        camera = SCMOSCamera(
-            100,  # npixels_x
-            100,  # npixels_y
-            pixel_size,  # pixel size
-            readnoise_map,  # per-pixel readnoise
-            offset = 100.0f0,
-            gain = 2.0f0,
-            qe = 0.9f0
-        )
-
-        (roi_batch, info) = getboxes(image, camera;
-            boxsize=7,
-            overlap=3.0,
-            sigma_small=1.0,
-            sigma_large=2.0,
-            minval=0.5,  # Threshold to potentially reject noisy spot
-            backend=:cpu
-        )
-
-        # With variance weighting, the low-noise spot should be detected
-        # The high-noise spot may or may not be detected depending on threshold
-        @test size(roi_batch.data, 3) >= 1
-        @test length(roi_batch) >= 1
-
-        # Verify camera has correct per-pixel calibration
-        @test roi_batch.camera isa SCMOSCamera
-        @test roi_batch.camera.readnoise isa AbstractArray
-        @test size(roi_batch.camera.readnoise) == (100, 100)  # Full image readnoise map
-
-        # BoxesInfo should be valid
-        @test info isa BoxesInfo
-        @test info.elapsed_s > 0
-    end
-
-    @testset "auto CPU fallback does not use the GPU" begin
-        # auto_timeout = 0 forces the :auto fallback without waiting; the fallback must then
-        # filter on the CPU, so it allocates no GPU memory. Only meaningful with a GPU.
-        if CUDA.functional()
-            image = rand(Float32, 128, 128, 10)
-            kw = (sigma_small=1.5, sigma_large=3.0, minval=0.1)
-            cameras = (
-                IdealCamera(1:129, 1:129, 0.1f0),
-                SCMOSCamera(128, 128, 0.1f0, 5.0f0, offset=100.0f0, gain=2.0f0, qe=0.9f0),
+# Returns nothing when every requirement of group g is met, else the reason it is not.
+function unmet(g)
+    for r in get(CFG[g], "requires", String[])
+        if r == "cuda"
+            Base.find_package("CUDA") === nothing &&
+                return "CUDA.jl is not in the $g environment"
+            Core.eval(Main, :(import CUDA))
+            Base.invokelatest(() -> Main.CUDA.functional()) ||
+                return "CUDA.functional() is false"
+        elseif r == "data"
+            p = expanduser(get(CFG[g], "data_path", ""))
+            isempty(p) && error("test_groups.toml: $g requires data but sets no data_path")
+            ispath(p) || return "data_path $p does not exist"
+        elseif r == "hardware"
+            get(ENV, "TEST_HARDWARE", "") == "1" || return "TEST_HARDWARE=1 is not set"
+        else
+            error(
+                "test_groups.toml: $g has unknown requirement \"$r\" (cuda, data, hardware)"
             )
-            for camera in cameras
-                (roi_cpu, _) = getboxes(image, camera; backend=:cpu, kw...)
-                getboxes(image, camera; backend=:auto, auto_timeout=0.0, kw...)  # compile first
-                local roi, info
-                gpu_bytes = CUDA.@allocated begin
-                    (roi, info) = getboxes(image, camera; backend=:auto, auto_timeout=0.0, kw...)
+        end
+    end
+    return nothing
+end
+
+# A group with its own test/<group>/Project.toml runs in a temporary copy of that
+# environment with the package developed into it, so its dependencies (CUDA) never
+# enter the Core env.
+function with_group_env(f, g)
+    proj = joinpath(folder(g), "Project.toml")
+    (g != "Core" && isfile(proj)) || return f()
+    prev, tmp = Base.active_project(), mktempdir()
+    cp(proj, joinpath(tmp, "Project.toml"))
+    Pkg.activate(tmp; io = devnull)
+    try
+        Pkg.develop(Pkg.PackageSpec(path = PKGROOT); io = devnull)
+        Pkg.instantiate(; io = devnull)
+        return f()
+    finally
+        Pkg.activate(prev; io = devnull)
+    end
+end
+
+function counts(ts)
+    c = Test.get_test_counts(ts)  # a Tuple before Julia 1.11, a TestCounts after
+    return c isa Tuple ? (pass = c[1] + c[5], fail = 0, error = 0, broken = c[4] + c[8]) :
+        (
+            pass = c.passes + c.cumulative_passes, fail = 0, error = 0,
+            broken = c.broken + c.cumulative_broken,
+        )
+end
+
+# Runs group g: each file in its own module (like SafeTestsets) and its own @testset.
+function rungroup(g)
+    t0 = time()
+    return with_group_env(g) do
+        reason = unmet(g)
+        reason === nothing ||
+            return Dict{String, Any}("ran" => false, "passed" => false, "reason" => reason)
+        printstyled("GROUP $g\n"; bold = true)
+        c = try
+            counts(
+                @testset "$g" begin
+                    for f in testfiles(g)
+                        @testset "$(relpath(f, TESTDIR))" begin
+                            Core.eval(
+                                Main, :(
+                                    module $(gensym(:testfile))
+                                    include($f)
+                                    end
+                                )
+                            )
+                        end
+                    end
                 end
-                @test info.backend == :cpu
-                @test gpu_bytes == 0
-                @test length(roi) == length(roi_cpu)
-                @test roi.x_corners == roi_cpu.x_corners && roi.y_corners == roi_cpu.y_corners
-            end
+            )
+        catch e
+            e isa Test.TestSetException || rethrow()
+            (pass = e.pass, fail = e.fail, error = e.error, broken = e.broken)
         end
+        Dict{String, Any}(
+            "ran" => true, "passed" => c.fail + c.error == 0, "pass" => c.pass,
+            "fail" => c.fail, "error" => c.error, "broken" => c.broken,
+            "seconds" => round(time() - t0; digits = 1)
+        )
     end
-
 end
 
-# Local performance benchmark (only runs in local environment, not on CI)
-println()
-println("="^70)
-if get(ENV, "CI", "false") == "false"
-    println("Local environment detected - running performance benchmark")
-    println("="^70)
-    include("local_performance_benchmark.jl")
-
-    # Run the benchmark
-    @testset "Local Performance Benchmark" begin
-        results = run_comprehensive_benchmark()
-        @test results !== nothing
-        @test !isempty(results)
-
-        # Validate that we got results for each configuration
-        @test length(results) >= 5  # At least 5 test configs
-
-        # Check that throughput values are positive
-        @test all(r -> r.cpu_throughput > 0, results)
-
-        # Check detection accuracy is reasonable (>50% of expected spots)
-        for r in results
-            accuracy = r.cpu_found / r.expected_spots
-            @test accuracy > 0.5
-        end
-
-        # If GPU available, check GPU results
-        if CUDA.functional()
-            @test all(r -> r.gpu_throughput > 0, results)
-            @test all(r -> r.speedup > 0, results)
-
-            # GPU should generally be faster (speedup > 1.0) for larger images
-            large_results = filter(r -> r.config.nx >= 256, results)
-            if !isempty(large_results)
-                @test any(r -> r.speedup > 1.0, large_results)
-            end
-        end
-    end
-
-    # GPU wait/timeout tests
-    println()
-    println("="^70)
-    println("Running GPU wait/timeout tests")
-    println("="^70)
-    include("local_gpu_wait_test.jl")
-
-    @testset "GPU Wait/Timeout Tests" begin
-        @test run_gpu_wait_tests() == true
-
-        # Memory pressure test (optional - may not trigger on high-memory GPUs)
-        if CUDA.functional()
-            @test test_memory_pressure_wait() == true
-        end
-    end
-else
-    println("CI environment detected - skipping performance benchmark")
-    println("To run performance benchmarks, execute tests locally:")
-    println("  julia> using Pkg; Pkg.test(\"SMLMBoxer\")")
-    println("="^70)
+sel = strip(get(ENV, "GROUP", ""))
+sel = isempty(sel) ? "Core" : sel
+explicit = sel != "Everything"
+wanted = explicit ? strip.(split(sel, ",")) : [g for g in GROUPS if haskey(CFG, g)]
+for g in wanted
+    haskey(CFG, g) || error("GROUP=$sel: $g is not declared in test_groups.toml")
 end
+
+results = Dict{String, Any}()
+for g in GROUPS
+    g in wanted || continue
+    results[g] = rungroup(g)
+    r = results[g]
+    r["ran"] || println(explicit ? "ERROR" : "SKIPPED", " group $g: ", r["reason"])
+end
+
+if haskey(ENV, "LAB_TEST_SUMMARY")
+    open(ENV["LAB_TEST_SUMMARY"], "w") do io
+        TOML.print(
+            io, Dict(
+                "julia" => string(VERSION), "host" => first(split(gethostname(), '.')),
+                "selection" => sel, "groups" => results
+            ); sorted = true
+        )
+    end
+end
+bad = [g for (g, r) in results if r["ran"] ? !r["passed"] : explicit]
+isempty(bad) || error("test groups failed or could not run: $(join(sort(bad), ", "))")

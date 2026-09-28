@@ -24,9 +24,11 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 
 ## Backend Parameters
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
-- `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback (default: 300.0)
+- `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback
+  (default: 300.0)
 - `gpu_timeout::Float64`: Max wait for GPU in :gpu mode (default: Inf)
-- `on_wait::Union{Function,Nothing}`: Optional callback `(elapsed, available, required) -> nothing` for GPU wait progress (default: nothing)
+- `on_wait::Union{Function,Nothing}`: Optional callback `(elapsed, available, required) ->
+  nothing` for GPU wait progress (default: nothing)
 
 # Examples
 ```julia
@@ -42,7 +44,7 @@ config = BoxerConfig(psf_sigma=0.13, backend=:gpu, gpu_timeout=60.0)
 """
 Base.@kwdef struct BoxerConfig <: AbstractSMLMConfig
     # PSF-aware interface
-    psf_sigma::Union{Float64,Nothing} = nothing
+    psf_sigma::Union{Float64, Nothing} = nothing
     min_photons::Float64 = 500.0
 
     # Advanced interface (direct control)
@@ -58,14 +60,22 @@ Base.@kwdef struct BoxerConfig <: AbstractSMLMConfig
     backend::Symbol = :auto
     auto_timeout::Float64 = 300.0
     gpu_timeout::Float64 = Inf
-    on_wait::Union{Function,Nothing} = nothing
+    on_wait::Union{Function, Nothing} = nothing
 end
 
 function Base.show(io::IO, config::BoxerConfig)
-    if config.psf_sigma !== nothing
-        print(io, "BoxerConfig(psf_sigma=$(config.psf_sigma), min_photons=$(config.min_photons), boxsize=$(config.boxsize), backend=$(config.backend))")
+    return if config.psf_sigma !== nothing
+        print(
+            io, "BoxerConfig(psf_sigma=$(config.psf_sigma), " *
+                "min_photons=$(config.min_photons), boxsize=$(config.boxsize), " *
+                "backend=$(config.backend))"
+        )
     else
-        print(io, "BoxerConfig(σ_small=$(config.sigma_small), σ_large=$(config.sigma_large), minval=$(config.minval), boxsize=$(config.boxsize), backend=$(config.backend))")
+        print(
+            io, "BoxerConfig(σ_small=$(config.sigma_small), " *
+                "σ_large=$(config.sigma_large), minval=$(config.minval), " *
+                "boxsize=$(config.boxsize), backend=$(config.backend))"
+        )
     end
 end
 
@@ -96,8 +106,13 @@ end
 function Base.show(io::IO, info::BoxesInfo)
     elapsed_ms = info.elapsed_s * 1000
     mem_kb = info.memory_per_batch / 1024
-    mem_str = mem_kb >= 1024 ? "$(round(mem_kb/1024, digits=1)) MB" : "$(round(mem_kb, digits=1)) KB"
-    print(io, "BoxesInfo($(info.n_rois) ROIs, $(round(elapsed_ms, digits=1)) ms, $(info.backend), $(info.n_batches) batches × $(info.batch_size), $(mem_str)/batch)")
+    mem_str = mem_kb >= 1024 ?
+        "$(round(mem_kb / 1024, digits = 1)) MB" : "$(round(mem_kb, digits = 1)) KB"
+    return print(
+        io, "BoxesInfo($(info.n_rois) ROIs, $(round(elapsed_ms, digits = 1)) " *
+            "ms, $(info.backend), $(info.n_batches) batches " *
+            "× $(info.batch_size), $(mem_str)/batch)"
+    )
 end
 
 """
@@ -172,11 +187,16 @@ The peak after filtering is:
     I_filtered = N / (2π σ_eff²)  [photons/pixel]
 
 The DoG response (small - large Gaussian) has a lower peak than the small Gaussian alone.
-For sigma_large = 2×sigma_small, the DoG peak is approximately 0.65× the small Gaussian peak.
+For sigma_large = 2×sigma_small, the DoG peak is approximately 0.65× the small Gaussian
+peak.
 
 For raw camera data in ADU, the threshold is scaled by effective_gain = QE × gain.
 """
-function photons_to_dog_threshold(min_photons::Real, psf_sigma::Real; effective_gain::Real=1.0)
+function photons_to_dog_threshold(
+        min_photons::Real,
+        psf_sigma::Real;
+        effective_gain::Real = 1.0
+    )
     # DoG filter uses sigma_small = 1.0 × psf_sigma
     sigma_small = 1.0 * psf_sigma
 
@@ -210,7 +230,8 @@ When psf_sigma is provided:
 - Converted to pixels using camera pixel size
 - sigma_small = 1.0 × psf_sigma_pixels (automatically calculated)
 - sigma_large = 2.0 × psf_sigma_pixels (automatically calculated)
-- minval = photons_to_dog_threshold(min_photons, psf_sigma_pixels) (automatically calculated)
+- minval = photons_to_dog_threshold(min_photons, psf_sigma_pixels) (automatically
+  calculated)
 
 # Advanced Interface (Direct Control)
 - `sigma_small::Real`: Small Gaussian sigma in pixels (default: 1.0)
@@ -229,7 +250,7 @@ When psf_sigma is provided:
 """
 mutable struct GetBoxesArgs
     imagestack::AbstractArray
-    camera::Union{AbstractCamera,Nothing}
+    camera::Union{AbstractCamera, Nothing}
     boxsize::Int
     overlap::Float32
     sigma_small::Float32
@@ -239,24 +260,24 @@ mutable struct GetBoxesArgs
     backend::Symbol
     auto_timeout::Float64
     gpu_timeout::Float64
-    on_wait::Union{Function,Nothing}
+    on_wait::Union{Function, Nothing}
 
     # Inner constructor handles conversion logic
     function GetBoxesArgs(;
-        imagestack = rand(Float32, 256, 256, 50) .> 0.999,
-        camera::Union{AbstractCamera,Nothing} = nothing,
-        boxsize::Int = 7,
-        overlap::Real = 2.0,
-        psf_sigma::Union{Real,Nothing} = nothing,
-        min_photons::Real = 500.0,
-        sigma_small::Union{Real,Nothing} = nothing,
-        sigma_large::Union{Real,Nothing} = nothing,
-        minval::Union{Real,Nothing} = nothing,
-        backend::Symbol = :auto,
-        auto_timeout::Real = 300.0,
-        gpu_timeout::Real = Inf,
-        on_wait::Union{Function,Nothing} = nothing
-    )
+            imagestack = rand(Float32, 256, 256, 50) .> 0.999,
+            camera::Union{AbstractCamera, Nothing} = nothing,
+            boxsize::Int = 7,
+            overlap::Real = 2.0,
+            psf_sigma::Union{Real, Nothing} = nothing,
+            min_photons::Real = 500.0,
+            sigma_small::Union{Real, Nothing} = nothing,
+            sigma_large::Union{Real, Nothing} = nothing,
+            minval::Union{Real, Nothing} = nothing,
+            backend::Symbol = :auto,
+            auto_timeout::Real = 300.0,
+            gpu_timeout::Real = Inf,
+            on_wait::Union{Function, Nothing} = nothing
+        )
         # Determine which interface is being used
         if psf_sigma !== nothing
             # PSF-aware detection (recommended)
@@ -265,14 +286,20 @@ mutable struct GetBoxesArgs
                 pixel_size_μm = get_pixel_size(camera)
                 psf_sigma_pixels = psf_sigma / pixel_size_μm
             else
-                error("psf_sigma in physical units (microns) requires camera to be provided. " *
-                      "Either provide a camera or use the advanced interface with sigma_small/sigma_large in pixels.")
+                error(
+                    "psf_sigma in physical units (microns) requires camera to be provided. "
+                        *
+                        "Either provide a camera or use the advanced interface with " *
+                        "sigma_small/sigma_large in pixels."
+                )
             end
 
             σ_small = Float32(1.0 * psf_sigma_pixels)
             σ_large = Float32(2.0 * psf_sigma_pixels)
             effective_gain = get_effective_gain(camera)
-            min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels; effective_gain=effective_gain)
+            min_val = photons_to_dog_threshold(
+                min_photons, psf_sigma_pixels; effective_gain = effective_gain,
+            )
         else
             # Direct control interface
             σ_small = Float32(sigma_small !== nothing ? sigma_small : 1.0)
@@ -283,11 +310,14 @@ mutable struct GetBoxesArgs
         # Validate backend
         backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
-        # use_gpu is determined later in _getboxes_impl based on backend and memory availability
+        # use_gpu is determined later in _getboxes_impl based on backend and memory
+        # availability
         initial_use_gpu = backend != :cpu
 
-        new(imagestack, camera, boxsize, Float32(overlap), σ_small, σ_large, min_val,
-            initial_use_gpu, backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait)
+        return new(
+            imagestack, camera, boxsize, Float32(overlap), σ_small, σ_large, min_val,
+            initial_use_gpu, backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait
+        )
     end
 end
 
@@ -311,8 +341,8 @@ function pixels_to_microns(pixel_coords::AbstractMatrix, camera::AbstractCamera)
         row, col = pixel_coords[i, 1], pixel_coords[i, 2]
         # Convert to 1-based pixel centers
         # pixel_edges are the edges, so center of pixel i is at (edges[i] + edges[i+1])/2
-        x = (camera.pixel_edges_x[Int(col)] + camera.pixel_edges_x[Int(col)+1]) / 2
-        y = (camera.pixel_edges_y[Int(row)] + camera.pixel_edges_y[Int(row)+1]) / 2
+        x = (camera.pixel_edges_x[Int(col)] + camera.pixel_edges_x[Int(col) + 1]) / 2
+        y = (camera.pixel_edges_y[Int(row)] + camera.pixel_edges_y[Int(row) + 1]) / 2
         coords_microns[i, 1] = x
         coords_microns[i, 2] = y
     end
@@ -333,21 +363,25 @@ Extract a camera ROI with calibration data for the specified pixel region.
 # Returns
 - Camera object of the same type with ROI calibration data
 """
-function extract_camera_roi(camera::IdealCamera{T}, row_range, col_range) where T
+function extract_camera_roi(camera::IdealCamera{T}, row_range, col_range) where {T}
     return IdealCamera(
         camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
         camera.pixel_edges_y[row_range]   # pixel_edges_y (positional)
     )
 end
 
-function extract_camera_roi(camera::SCMOSCamera{T}, row_range, col_range) where T
+function extract_camera_roi(camera::SCMOSCamera{T}, row_range, col_range) where {T}
     # Handle both scalar and per-pixel calibration parameters
     # SMLMData 0.6+: SCMOSCamera calibration arrays use (ny, nx) = (rows, cols) convention
     # This matches Julia's standard image indexing: array[row, col]
-    offset = camera.offset isa AbstractArray ? camera.offset[row_range[1:end-1], col_range[1:end-1]] : camera.offset
-    gain = camera.gain isa AbstractArray ? camera.gain[row_range[1:end-1], col_range[1:end-1]] : camera.gain
-    readnoise = camera.readnoise isa AbstractArray ? camera.readnoise[row_range[1:end-1], col_range[1:end-1]] : camera.readnoise
-    qe = camera.qe isa AbstractArray ? camera.qe[row_range[1:end-1], col_range[1:end-1]] : camera.qe
+    offset = camera.offset isa AbstractArray ?
+        camera.offset[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.offset
+    gain = camera.gain isa AbstractArray ?
+        camera.gain[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.gain
+    readnoise = camera.readnoise isa AbstractArray ?
+        camera.readnoise[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.readnoise
+    qe = camera.qe isa AbstractArray ?
+        camera.qe[row_range[1:(end - 1)], col_range[1:(end - 1)]] : camera.qe
 
     return SCMOSCamera(
         camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
@@ -371,13 +405,13 @@ Compute variance map from camera calibration.
 # Returns
 - Variance map (variance = readnoise²) matching image dimensions
 """
-function get_variance_map(camera::IdealCamera{T}, imagesize::Tuple{Int,Int}) where T
+function get_variance_map(camera::IdealCamera{T}, imagesize::Tuple{Int, Int}) where {T}
     # IdealCamera has no readnoise, return uniform variance of 1.0
     # Always Float32 to match imagestack type (getboxes converts all images to Float32)
     return ones(Float32, imagesize)
 end
 
-function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int,Int}) where T
+function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int, Int}) where {T}
     nrows, ncols = imagesize
 
     if camera.readnoise isa AbstractArray
@@ -388,8 +422,11 @@ function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int,Int}) whe
         if size(variance_map) == (ncols, nrows) && ncols != nrows
             variance_map = transpose(variance_map)
         end
-        @assert size(variance_map) == imagesize "Readnoise map size $(size(variance_map)) doesn't match image size $imagesize"
-        # Convert to Float32 to match imagestack type (getboxes converts all images to Float32)
+        @assert size(variance_map) == imagesize (
+            "Readnoise map size $(size(variance_map)) doesn't match image size $imagesize"
+        )
+        # Convert to Float32 to match imagestack type (getboxes converts all images to
+        # Float32)
         return Float32.(collect(variance_map))
     else
         # Scalar readnoise: uniform variance (always Float32 to match imagestack)
@@ -441,9 +478,11 @@ for chunk_start in 1:max_frames:total_frames
 end
 ```
 """
-function recommend_batch_size(height::Int, width::Int;
-        backend::Symbol=:auto,
-        memory_fraction::Real=0.8)
+function recommend_batch_size(
+        height::Int, width::Int;
+        backend::Symbol = :auto,
+        memory_fraction::Real = 0.8
+    )
     # Memory multiplier: accounts for all processing stages
     # Matches n_copies in _getboxes_impl for consistency
     n_copies = 6
@@ -455,7 +494,7 @@ function recommend_batch_size(height::Int, width::Int;
     if use_gpu_actual
         # GPU: find device with most free memory via NVML (no context switch needed)
         max_free_mem = 0
-        for i in 0:length(CUDA.devices())-1
+        for i in 0:(length(CUDA.devices()) - 1)
             info = CUDA.NVML.memory_info(CUDA.NVML.Device(i))
             max_free_mem = max(max_free_mem, info.free)
         end
