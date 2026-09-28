@@ -1,10 +1,11 @@
 name: CI
 on:
+  # Runs on PRs, not on commits to main (decision 0025 as refined by Keith). The tag push
+  # stays: the docs job below deploys the release docs from it (tests run once per release).
   push:
-    branches:
-      - main
     tags: ['*']
   pull_request:
+  workflow_dispatch:
 concurrency:
   # Skip intermediate builds: always.
   # Cancel intermediate builds: only if it is a pull request build.
