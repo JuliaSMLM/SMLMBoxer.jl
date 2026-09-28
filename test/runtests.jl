@@ -84,6 +84,33 @@ using Test
         @test info.elapsed_s > 0
     end
 
+    @testset "Overlap removal applies to every frame" begin
+        # Three identical frames, two peaks 8 px apart. overlap = 10 must drop the dimmer
+        # peak in every frame, not only in frame 1; overlap = 0 keeps both everywhere.
+        image = zeros(Float32, 40, 40, 3)
+        for f in 1:3
+            image[20, 14, f] = 100
+            image[20, 22, f] = 90
+        end
+        perframe(rb) = [count(==(f), rb.frame_indices) for f in 1:3]
+
+        for (overlap, expected) in ((0.0, [2, 2, 2]), (10.0, [1, 1, 1]))
+            (roi_batch, _) = getboxes(image;
+                boxsize=7,
+                overlap=overlap,
+                sigma_small=1.0,
+                sigma_large=2.0,
+                minval=1.0,
+                backend=:cpu
+            )
+            @test perframe(roi_batch) == expected
+            if overlap == 10.0
+                # The brighter peak (col 14) is the one kept in each frame
+                @test all(x -> x <= 14 < x + 7, roi_batch.x_corners)
+            end
+        end
+    end
+
     @testset "New API with IdealCamera" begin
         # Test image with two bright peaks
         image = zeros(Float32, 100, 100)
