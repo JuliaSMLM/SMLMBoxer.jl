@@ -40,7 +40,7 @@ using SMLMBoxer, SMLMData
 camera = IdealCamera(1:256, 1:256, 0.1f0)
 
 # Detect particles using PSF-aware interface
-roi_batch = getboxes(imagestack, camera;
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,      # PSF sigma in microns (130 nm)
     min_photons = 500.0,   # Minimum photon count threshold
     boxsize = 11)          # ROI size in pixels
@@ -73,7 +73,7 @@ camera = SCMOSCamera(
 )
 
 # Automatically uses variance-weighted filtering
-roi_batch = getboxes(imagestack, camera;
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
     backend = :auto)    # GPU with CPU fallback
@@ -104,7 +104,7 @@ The `getboxes()` function implements a multi-stage blob detection pipeline:
 The recommended interface automatically configures filter parameters from physical units:
 
 ```julia
-roi_batch = getboxes(imagestack, camera;
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,      # PSF width in microns (physical units)
     min_photons = 500.0)   # Detection threshold in photons
 ```
@@ -119,7 +119,7 @@ This automatically calculates:
 Expert users can directly control filter parameters:
 
 ```julia
-roi_batch = getboxes(imagestack;
+(roi_batch, info) = getboxes(imagestack;
     sigma_small = 1.5,  # Small Gaussian sigma in pixels
     sigma_large = 3.0,  # Large Gaussian sigma in pixels
     minval = 10.0)      # DoG intensity threshold

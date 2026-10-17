@@ -79,7 +79,7 @@ Configuration struct for ROI detection parameters. Supports `@kwdef` constructio
 
     # Box parameters
     boxsize::Int = 7              # ROI size in pixels
-    overlap::Float64 = 2.0        # Max overlap between detections
+    overlap::Float64 = 2.0        # Local-maximum window is max(3, ⌊boxsize - overlap⌋)
 
     # Backend parameters
     backend::Symbol = :auto       # :cpu, :gpu, or :auto
@@ -137,7 +137,11 @@ Main detection function. Applies DoG filtering, finds local maxima, extracts ROI
 
 *Other Parameters:*
 - `boxsize::Int` - ROI size in pixels (default: 7)
-- `overlap::Real` - Maximum overlap between detections in pixels (default: 2.0)
+- `overlap::Real` - pixels (default 2.0). Local maxima are found in a square window of k =
+  max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
+  pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
+  not a bound on box overlap: with the defaults, neighbouring boxes can share 4 rows or
+  columns.
 - `backend::Symbol` - Compute backend: `:cpu`, `:gpu`, or `:auto` (default: `:auto`)
   - `:cpu` - Always use CPU
   - `:gpu` - Require GPU, wait for memory if needed (waits forever by default)
@@ -213,7 +217,7 @@ Container for multiple ROIs from particle detection. Supports iteration and inde
 ```julia
 # Iteration
 for roi in roi_batch
-    # roi is a SingleROI with .data, .corner, .frame_idx, .camera
+    # roi is a SingleROI with .data, .corner, .frame_idx
     process(roi.data)
 end
 
@@ -222,7 +226,8 @@ roi = roi_batch[1]  # Returns SingleROI
 ```
 
 ### `SingleROI` (from SMLMData.jl)
-Individual ROI with image data, position, frame index, and camera calibration.
+Individual ROI: image patch, corner (x, y) = (column, row) in camera pixels (1-based), and
+frame index. Calibration stays on the batch (`roi_batch.camera`, full image).
 
 ## Common Workflows
 
@@ -297,7 +302,6 @@ for roi in roi_batch
     # - roi.data: Image patch
     # - roi.corner: (x, y) corner position
     # - roi.frame_idx: Frame index
-    # - roi.camera: Camera ROI calibration
 
     fit_gaussian(roi.data)
 end
@@ -360,7 +364,8 @@ sigma_large = 2.0 × psf_sigma_pixels  # Background suppression
 # Photon threshold → DoG intensity threshold
 σ_eff = √(psf_sigma² + sigma_small²)  # Effective sigma after filtering
 peak_filtered = min_photons / (2π × σ_eff²)
-minval = 0.65 × peak_filtered  # DoG reduction factor
+minval = 0.65 × peak_filtered × effective_gain
+# effective_gain: 1 for IdealCamera (photons); QE / gain for SCMOSCamera (ADU)
 ```
 
 ### Variance-Weighted Convolution

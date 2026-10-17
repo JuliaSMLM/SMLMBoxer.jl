@@ -20,7 +20,11 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 
 ## Box Parameters
 - `boxsize::Int`: ROI box size in pixels (default: 7)
-- `overlap::Float64`: Max overlap between detections in pixels (default: 2.0)
+- `overlap::Float64`: pixels (default 2.0). Local maxima are found in a square window of k =
+  max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
+  pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
+  not a bound on box overlap: with the defaults, neighbouring boxes can share 4 rows or
+  columns.
 
 ## Backend Parameters
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
@@ -144,7 +148,7 @@ function get_effective_gain(camera::SCMOSCamera)
     # So effective_gain (ADU/photon) = QE / gain
     gain = camera.gain isa Real ? camera.gain : mean(camera.gain)
     qe = camera.qe isa Real ? camera.qe : mean(camera.qe)
-    return Float32(qe / gain)  # Combined: photons → ADU (QE / gain, not QE × gain)
+    return Float32(qe / gain)  # Combined: photons → ADU (QE / gain)
 end
 
 """
@@ -155,7 +159,8 @@ Convert total photon count threshold to DoG filter intensity threshold in image 
 # Arguments
 - `min_photons`: Minimum signal photons above background for detection
 - `psf_sigma`: PSF sigma in pixels
-- `effective_gain`: Camera gain factor (QE × gain) to convert photons → ADU (default: 1.0)
+- `effective_gain`: ADU per photon: 1 for an image in photons, QE / gain for an SCMOSCamera
+  (gain in e⁻/ADU; see [`get_effective_gain`](@ref)). Default 1.0.
 
 # Returns
 - `minval`: DoG filter intensity threshold in image units (ADU)
@@ -174,7 +179,7 @@ The peak after filtering is:
 The DoG response (small - large Gaussian) has a lower peak than the small Gaussian alone.
 For sigma_large = 2×sigma_small, the DoG peak is approximately 0.65× the small Gaussian peak.
 
-For raw camera data in ADU, the threshold is scaled by effective_gain = QE × gain.
+For raw camera data in ADU the threshold is multiplied by effective_gain = QE / gain.
 """
 function photons_to_dog_threshold(min_photons::Real, psf_sigma::Real; effective_gain::Real=1.0)
     # DoG filter uses sigma_small = 1.0 × psf_sigma
@@ -221,7 +226,11 @@ When psf_sigma is provided:
 - `imagestack`: Input image stack
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
 - `boxsize::Int`: ROI box size in pixels (default: 7)
-- `overlap::Real`: Maximum overlap between detections in pixels (default: 2.0)
+- `overlap::Real`: pixels (default 2.0). Local maxima are found in a square window of k =
+  max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
+  pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
+  not a bound on box overlap: with the defaults, neighbouring boxes can share 4 rows or
+  columns.
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
 - `auto_timeout::Real`: Max wait seconds for :auto mode before CPU fallback (default: 300.0)
 - `gpu_timeout::Real`: Max wait seconds for :gpu mode (default: Inf)
@@ -436,7 +445,7 @@ println("Load up to \$max_frames frames at a time")
 for chunk_start in 1:max_frames:total_frames
     chunk_end = min(chunk_start + max_frames - 1, total_frames)
     imagestack = load_frames(chunk_start:chunk_end)
-    roi_batch = getboxes(imagestack, camera; psf_sigma=0.13)
+    (roi_batch, info) = getboxes(imagestack, camera; psf_sigma=0.13)
     # ... process results
 end
 ```

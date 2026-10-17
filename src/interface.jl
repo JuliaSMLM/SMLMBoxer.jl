@@ -26,7 +26,11 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 
 ## Other Parameters
 - `boxsize::Int`: Size of the box to cut out around each local maximum in pixels (default: 7).
-- `overlap::Real`: Maximum overlap allowed between boxes in pixels (default: 2.0).
+- `overlap::Real`: pixels (default 2.0). Local maxima are found in a square window of k =
+  max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
+  pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
+  not a bound on box overlap: with the defaults, neighbouring boxes can share 4 rows or
+  columns.
 - `backend::Symbol`: Compute backend - `:cpu`, `:gpu`, or `:auto` (default: `:auto`).
   - `:cpu` - Always use CPU
   - `:gpu` - Require GPU, wait for memory if needed (waits forever by default)
@@ -65,7 +69,8 @@ When using the PSF-aware interface with `psf_sigma` (in microns):
 - psf_sigma is converted to pixels using camera pixel size
 - sigma_small = 1.0 × psf_sigma_pixels (matches PSF for optimal blob detection)
 - sigma_large = 2.0 × psf_sigma_pixels (background suppression)
-- minval is automatically calculated from min_photons accounting for PSF spreading and DoG response
+- minval is automatically calculated from min_photons accounting for PSF spreading, the DoG
+  response and, for an SCMOSCamera, the conversion to ADU (QE / gain)
 
 ## Variance-Weighted Filtering (sCMOS)
 
