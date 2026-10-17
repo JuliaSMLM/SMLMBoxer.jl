@@ -25,22 +25,22 @@ for i in 1:10, j in 1:10
     bg = 10.0
     push!(emitters, Emitter2DFit{Float64}(
         x, y, photons, bg,
-        0.0, 0.0, 0.0, 0.0,  # uncertainties
-        1, 1, 0, length(emitters)+1  # frame, dataset, track, id
+        0.0, 0.0, 0.0, 0.0;  # uncertainties
+        frame = 1, id = length(emitters)+1
     ))
 end
 
 # Generate synthetic images
 smld = BasicSMLD(emitters, camera, 1, 1)
 psf = GaussianPSF(0.13)  # 130 nm sigma
-imagestack = gen_images(smld, psf, poisson_noise=true, bg=10.0)
+imagestack, _ = gen_images(smld, psf; poisson_noise=true, bg=10.0)
 ```
 
 ### Detection with PSF-Aware Interface
 
 ```julia
 # Detect using recommended PSF-aware interface
-roi_batch = getboxes(Float32.(imagestack), camera;
+(roi_batch, info) = getboxes(Float32.(imagestack), camera;
     psf_sigma = 0.13,      # PSF sigma in microns
     min_photons = 500.0,   # Detection threshold
     boxsize = 11,          # ROI size
@@ -110,10 +110,11 @@ camera = SCMOSCamera(
 
 ```julia
 # Generate sCMOS image (see basic example for emitter creation)
-imagestack = gen_images(smld, psf, camera_noise=true, bg=10.0)
+smld_scmos = BasicSMLD(emitters, camera, 1, 1)
+imagestack, _ = gen_images(smld_scmos, psf; camera_noise=true, bg=10.0)
 
 # Detection automatically uses variance weighting for SCMOSCamera
-roi_batch = getboxes(Float32.(imagestack), camera;
+(roi_batch, info) = getboxes(Float32.(imagestack), camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
     boxsize = 11,
@@ -146,7 +147,7 @@ For expert users who want precise control over filter parameters.
 
 ```julia
 # Direct control over DoG filter sigmas and threshold
-roi_batch = getboxes(imagestack;
+(roi_batch, info) = getboxes(imagestack;
     sigma_small = 1.5,  # Small Gaussian sigma (pixels)
     sigma_large = 3.0,  # Large Gaussian sigma (pixels)
     minval = 15.0,      # DoG intensity threshold
@@ -165,7 +166,7 @@ sigma_values = [1.0, 1.3, 1.5, 2.0]
 results = []
 
 for sigma in sigma_values
-    roi_batch = getboxes(imagestack, camera;
+    (roi_batch, info) = getboxes(imagestack, camera;
         sigma_small = sigma,
         sigma_large = 2.0 * sigma,
         minval = 10.0,
@@ -176,8 +177,8 @@ end
 
 # Find optimal sigma
 best = argmax(r -> r.n_detected, results)
-println("Optimal sigma: $(results[best].sigma)")
-println("Detections: $(results[best].n_detected)")
+println("Optimal sigma: $(best.sigma)")
+println("Detections: $(best.n_detected)")
 ```
 
 ## GPU Acceleration
@@ -192,24 +193,22 @@ using CUDA
 # Check GPU availability
 if CUDA.functional()
     println("GPU detected: $(CUDA.name(CUDA.device()))")
-    println("Available memory: $(CUDA.available_memory() / 1024^3) GB")
+    println("Available memory: $(CUDA.free_memory() / 1024^3) GB")
 else
     println("No GPU available, using CPU")
 end
 
 # GPU acceleration enabled by default
-roi_batch_gpu = getboxes(imagestack, camera;
+(roi_batch_gpu, info_gpu) = getboxes(imagestack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
     backend = :auto)  # Try GPU, fall back to CPU
 
 # Benchmark GPU vs CPU
-using BenchmarkTools
-
-@time roi_batch_cpu = getboxes(imagestack, camera;
+@time (roi_batch_cpu, _) = getboxes(imagestack, camera;
     psf_sigma = 0.13, min_photons = 500.0, backend = :cpu)
 
-@time roi_batch_gpu = getboxes(imagestack, camera;
+@time (roi_batch_gpu, _) = getboxes(imagestack, camera;
     psf_sigma = 0.13, min_photons = 500.0, backend = :auto)
 ```
 
@@ -217,16 +216,16 @@ using BenchmarkTools
 
 ```julia
 # SMLMBoxer automatically batches large datasets that exceed GPU memory
-large_stack = zeros(Float32, 512, 512, 1000)  # 1000 frames
+large_stack = zeros(Float32, 256, 256, 1000)  # 1000 frames, same size as the camera
 
 # Automatic batching handles memory constraints
-roi_batch = getboxes(large_stack, camera;
+(roi_large, info_large) = getboxes(large_stack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0,
     backend = :auto)  # Batches frames to fit GPU memory
 
 println("Processed $(size(large_stack, 3)) frames")
-println("Total detections: $(length(roi_batch))")
+println("Total detections: $(length(roi_large))")
 ```
 
 ## Integration with Downstream Analysis
@@ -238,14 +237,12 @@ println("Total detections: $(length(roi_batch))")
 
 # Example: Filter ROIs by intensity before fitting
 min_intensity = 100.0
-filtered_rois = filter(roi_batch) do roi
-    sum(roi.data) > min_intensity
-end
+keep = [i for i in 1:length(roi_batch) if sum(roi_batch[i].data) > min_intensity]
 
-println("Kept $(length(filtered_rois))/$(length(roi_batch)) ROIs")
+println("Kept $(length(keep))/$(length(roi_batch)) ROIs")
 
 # ROIs maintain coordinate information for fitting
-for roi in filtered_rois
+for roi in (roi_batch[i] for i in keep)
     # Each roi contains:
     # - roi.data: Image patch
     # - roi.corner: Position in camera coordinates
@@ -256,6 +253,9 @@ end
 
 ### Extracting ROI Centers
 
+A box at the image border is shifted inward (`fillbox!`), so its centre pixel is not the
+detected maximum.
+
 ```julia
 # Convert corner positions to approximate centers
 roi_size = roi_batch.roi_size
@@ -264,10 +264,11 @@ center_offset = roi_size ÷ 2
 x_centers = roi_batch.x_corners .+ center_offset
 y_centers = roi_batch.y_corners .+ center_offset
 
-# Convert to physical coordinates (microns)
+# Convert to physical coordinates (µm): SMLMData puts pixel k's centre at
+# (k - 0.5) * pixel_size
 pixel_size = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
-x_microns = (x_centers .- 1) .* pixel_size
-y_microns = (y_centers .- 1) .* pixel_size
+x_microns = (x_centers .- 0.5) .* pixel_size
+y_microns = (y_centers .- 0.5) .* pixel_size
 
 println("First detection center: ($(x_microns[1]), $(y_microns[1])) μm")
 ```
@@ -281,13 +282,13 @@ println("First detection center: ($(x_microns[1]), $(y_microns[1])) μm")
 n_frames = size(imagestack, 3)
 
 # getboxes processes entire stack and tracks frame indices
-roi_batch = getboxes(imagestack, camera;
+(roi_batch, info) = getboxes(imagestack, camera;
     psf_sigma = 0.13,
     min_photons = 500.0)
 
 # Group detections by frame
-using StatsBase
-detections_per_frame = countmap(roi_batch.frame_indices)
+detections_per_frame = Dict(f => count(==(f), roi_batch.frame_indices)
+                            for f in unique(roi_batch.frame_indices))
 
 println("Frame-by-frame detection counts:")
 for frame in sort(collect(keys(detections_per_frame)))
@@ -299,6 +300,7 @@ end
 
 ```julia
 # Filter detections by quality metrics
+using Statistics
 function filter_by_quality(roi_batch; min_snr=3.0)
     keep_indices = Int[]
 
@@ -318,7 +320,11 @@ function filter_by_quality(roi_batch; min_snr=3.0)
         end
     end
 
-    return roi_batch[keep_indices]
+    return ROIBatch(roi_batch.data[:, :, keep_indices],
+                    roi_batch.x_corners[keep_indices],
+                    roi_batch.y_corners[keep_indices],
+                    roi_batch.frame_indices[keep_indices],
+                    roi_batch.camera)
 end
 
 # Apply filtering
@@ -338,7 +344,7 @@ for (i, path) in enumerate(file_paths)
     imagestack = load_image_stack(path)
 
     # Detect
-    roi_batch = getboxes(imagestack, camera;
+    (roi_batch, info) = getboxes(imagestack, camera;
         psf_sigma = 0.13,
         min_photons = 500.0)
 

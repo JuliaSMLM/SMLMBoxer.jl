@@ -104,7 +104,7 @@ ROIBatch supports iteration and indexing:
 
 ```julia
 for roi in roi_batch
-    # roi.data, roi.corner, roi.frame_idx, roi.camera
+    # roi.data, roi.corner, roi.frame_idx
 end
 first_roi = roi_batch[1]
 ```
