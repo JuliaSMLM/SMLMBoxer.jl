@@ -310,9 +310,38 @@ end
 
 
 """
+    dog_conv_kernel!(out, img, w, p)
+
+KernelAbstractions kernel for direct 2D convolution, batched over frames via
+ndrange=(nrows, ncols, nframes). Zero padding of `p` on all sides; the kernel is flipped
+the way NNlib.conv does (true convolution, not cross-correlation).
+
+# Arguments
+- `out`: Output array (nrows, ncols, 1, nframes)
+- `img`: Input array (nrows, ncols, 1, nframes)
+- `w`: Convolution kernel (K, K)
+- `p`: Zero-padding on each side (K ÷ 2)
+"""
+@kernel function dog_conv_kernel!(out, @Const(img), @Const(w), p)
+    i, j, f = @index(Global, NTuple)
+    nrows, ncols = size(img, 1), size(img, 2)
+    k = size(w, 1)
+    acc = zero(eltype(out))
+    for b in 1:k, a in 1:k
+        ii = i + a - 1 - p
+        jj = j + b - 1 - p
+        if 1 <= ii <= nrows && 1 <= jj <= ncols
+            @inbounds acc += w[k + 1 - a, k + 1 - b] * img[ii, jj, 1, f]
+        end
+    end
+    @inbounds out[i, j, 1, f] = acc
+end
+
+"""
     convolve(imagestack, kernel; use_gpu=false)
 
-Convolve imagestack with given kernel using NNlib.
+Convolve imagestack with given kernel using NNlib on the CPU, or a KernelAbstractions
+kernel on the GPU.
 
 # Arguments
 - `imagestack`: Input array of image data (H, W, 1, F)
@@ -337,9 +366,15 @@ function convolve(imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; us
         # Transfer to GPU if not already there
         imagestack_gpu = imagestack isa CuArray ? imagestack : CuArray(imagestack)
         weights_gpu = CuArray(weights)
+        nrows, ncols, _, nframes = size(imagestack_gpu)
 
-        # NNlib.conv uses cuDNN on GPU - KEEP RESULT ON GPU
-        filtered_stack = NNlib.conv(imagestack_gpu, weights_gpu; pad=pad, stride=1)
+        # KernelAbstractions direct convolution - KEEP RESULT ON GPU
+        filtered_stack = CUDA.zeros(eltype(imagestack_gpu), nrows, ncols, 1, nframes)
+        backend = CUDABackend()
+        kernel! = dog_conv_kernel!(backend)
+        kernel!(filtered_stack, imagestack_gpu, weights_gpu, p;
+                ndrange=(nrows, ncols, nframes))
+        KernelAbstractions.synchronize(backend)
     else
         # NNlib.conv CPU implementation
         filtered_stack = NNlib.conv(imagestack, weights; pad=pad, stride=1)

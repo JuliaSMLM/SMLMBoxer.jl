@@ -9,7 +9,7 @@ SMLMBoxer.jl is a high-performance Julia package for detecting particles and blo
 ## Features
 
 - **PSF-Aware Detection**: Automatic parameter tuning based on PSF characteristics and photon thresholds
-- **GPU Acceleration**: CUDA support via NNlib/cuDNN for fast processing of large image stacks
+- **GPU Acceleration**: CUDA support via KernelAbstractions kernels (NNlib on CPU) for fast processing of large image stacks
 - **Variance-Weighted Filtering**: Optimal detection in sCMOS data with spatially-varying noise
 - **ROIBatch Integration**: Seamless integration with SMLMData.jl coordinate system
 - **Flexible Interface**: Both user-friendly PSF-aware and expert-level direct control modes
