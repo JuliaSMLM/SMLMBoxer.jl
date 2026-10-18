@@ -117,7 +117,7 @@ Remove overlapping coords based on distance.
 """
 function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
     overlap = kwargs.overlap
-    for f in 1:size(coords, 2)
+    for f in eachindex(coords)
         ncoords = size(coords[f], 1)
         keep = trues(ncoords)
 
