@@ -415,6 +415,9 @@ This helps users decide how much data to load before calling `getboxes()`. For v
 datasets, loading data in chunks of this size ensures efficient processing without
 running out of memory.
 
+GPU memory is queried via NVML when supported. Otherwise CUDA is queried on each
+device, restoring the previous device after each query. Other query errors propagate.
+
 # Arguments
 - `height::Int`: Image height in pixels
 - `width::Int`: Image width in pixels
@@ -462,11 +465,10 @@ function recommend_batch_size(height::Int, width::Int;
     use_gpu_actual = backend != :cpu && has_cuda() && CUDA.functional()
 
     if use_gpu_actual
-        # GPU: find device with most free memory via NVML (no context switch needed)
+        # GPU: find device with most free memory, preferring NVML
         max_free_mem = 0
         for i in 0:length(CUDA.devices())-1
-            info = CUDA.NVML.memory_info(CUDA.NVML.Device(i))
-            max_free_mem = max(max_free_mem, info.free)
+            max_free_mem = max(max_free_mem, gpu_free_memory(i))
         end
         available = max_free_mem * memory_fraction
     else

@@ -398,6 +398,80 @@ using Test
         end
     end
 
+    @testset "NVML memory query fallback" begin
+        if CUDA.functional()
+            # Isolate NVML overrides so they cannot affect the rest of the suite.
+            script = raw"""
+            using SMLMBoxer
+            using CUDA
+
+            const nvml_error_code = Ref(CUDA.NVML.NVML_ERROR_NOT_SUPPORTED)
+            CUDA.NVML.memory_info(dev::CUDA.NVML.Device) =
+                throw(CUDA.NVML.NVMLError(nvml_error_code[]))
+            CUDA.NVML.compute_processes(dev::CUDA.NVML.Device) =
+                error("Unexpected NVML contention query")
+            CUDA.NVML.utilization_rates(dev::CUDA.NVML.Device) =
+                error("Unexpected NVML utilization query")
+
+            function same_boxes(roi, reference)
+                return roi.data == reference.data &&
+                    roi.x_corners == reference.x_corners &&
+                    roi.y_corners == reference.y_corners &&
+                    roi.frame_indices == reference.frame_indices
+            end
+
+            function run_backend(backend, image, reference, kw)
+                try
+                    roi, info = getboxes(image; backend=backend,
+                        auto_timeout=10.0, gpu_timeout=10.0, kw...)
+                    return "$(info.backend),$(same_boxes(roi, reference))"
+                catch e
+                    if e isa CUDA.NVML.NVMLError &&
+                            e.code == CUDA.NVML.NVML_ERROR_UNKNOWN
+                        return "nvml_unknown"
+                    end
+                    showerror(stderr, e)
+                    println(stderr)
+                    return "error"
+                end
+            end
+
+            image = zeros(Float32, 64, 64, 20)
+            for frame in 1:20
+                image[20, 20, frame] = 100
+                image[45, 40, frame] = 75
+            end
+            kw = (boxsize=7, sigma_small=1.0, sigma_large=2.0, minval=0.5)
+            reference, _ = getboxes(image; backend=:cpu, kw...)
+            isempty(reference.data) && error("CPU reference contains no boxes")
+
+            for (label, code) in (
+                    ("not_supported", CUDA.NVML.NVML_ERROR_NOT_SUPPORTED),
+                    ("other_failure", CUDA.NVML.NVML_ERROR_UNKNOWN))
+                nvml_error_code[] = code
+                auto_result = run_backend(:auto, image, reference, kw)
+                gpu_result = run_backend(:gpu, image, reference, kw)
+                println(label, "|auto=", auto_result, "|gpu=", gpu_result)
+            end
+            """
+            cmd = `$(Base.julia_cmd()) --startup-file=no
+                   --project=$(Base.active_project()) -e $script`
+            output = IOBuffer()
+            process = run(pipeline(ignorestatus(cmd); stdout=output))
+            @test success(process)
+            lines = split(String(take!(output)), '\n')
+            @test "not_supported|auto=gpu,true|gpu=gpu,true" in lines
+            @test "other_failure|auto=cpu,true|gpu=nvml_unknown" in lines
+
+            # Query the actual driver as well as the simulated failures above.
+            device = CUDA.device()
+            free_mem = SMLMBoxer.gpu_free_memory(CUDA.deviceid(device))
+            @test free_mem isa Integer
+            @test 0 < free_mem <= CUDA.total_memory()
+            @test CUDA.device() == device
+        end
+    end
+
 end
 
 # Local performance benchmark (only runs in local environment, not on CI)
