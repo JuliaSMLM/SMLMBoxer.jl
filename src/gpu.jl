@@ -17,6 +17,50 @@ Check if CUDA is available. Wrapper for CUDA.functional().
 has_cuda() = CUDA.functional()
 
 """
+    is_gpu_query_error(e) -> Bool
+
+True when `e` comes from querying a GPU (an NVML error, or a CUDA driver error such as a
+failed context creation). `:auto` falls back to the CPU on these; anything else propagates.
+"""
+is_gpu_query_error(e) = e isa CUDA.NVML.NVMLError || e isa CUDA.CuError
+
+"""
+    nvml_free_memory(i) -> Union{Int, Nothing}
+
+Return free memory in bytes on GPU `i` (0-based), using NVML without a CUDA context.
+Return `nothing` if NVML is unavailable or reports `NVML_ERROR_NOT_SUPPORTED`.
+Other errors propagate.
+"""
+function nvml_free_memory(i::Integer)
+    CUDA.NVML.has_nvml() || return nothing
+    try
+        return CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free
+    catch e
+        if !(e isa CUDA.NVML.NVMLError &&
+                e.code == CUDA.NVML.NVML_ERROR_NOT_SUPPORTED)
+            rethrow()
+        end
+        return nothing
+    end
+end
+
+"""
+    cuda_free_memory(i) -> Int
+
+Return free memory in bytes on GPU `i` (0-based) from CUDA. Activates the device (creating
+its context if needed) for the query and restores the previous device.
+"""
+cuda_free_memory(i::Integer) = CUDA.device!(CUDA.free_memory, i)
+
+"""
+    gpu_free_memory(i) -> Int
+
+Return free memory in bytes on GPU `i` (0-based), using `nvml_free_memory` when supported.
+Otherwise query CUDA on that device and restore the previous device. Other errors propagate.
+"""
+gpu_free_memory(i::Integer) = @something(nvml_free_memory(i), cuda_free_memory(i))
+
+"""
     find_best_gpu() -> Int
 
 Find the GPU with the most free memory and switch to it.
@@ -25,7 +69,8 @@ Returns the device index (0-based). On single-GPU systems, returns 0 immediately
 
 Uses NVML to query free memory on each device without creating CUDA contexts,
 avoiding `cuDevicePrimaryCtxRetain` OOM errors under multi-process contention.
-Only calls `CUDA.device!()` once on the selected device.
+If NVML memory queries are not supported, temporarily activates each device to
+query CUDA instead. Otherwise only calls `CUDA.device!()` on the selected device.
 
 # Example
 ```julia
@@ -38,12 +83,12 @@ function find_best_gpu()
     n = length(CUDA.devices())
     n == 1 && return 0
 
-    # Query memory via NVML (no CUDA context needed, safe under contention)
+    # Prefer NVML to avoid creating CUDA contexts under contention
     best, maxfree = 0, 0
     for i in 0:(n-1)
-        info = CUDA.NVML.memory_info(CUDA.NVML.Device(i))
-        if info.free > maxfree
-            maxfree, best = info.free, i
+        free_mem = gpu_free_memory(i)
+        if free_mem > maxfree
+            maxfree, best = free_mem, i
         end
     end
 
@@ -56,7 +101,9 @@ end
     poll_gpu_nvml(required_bytes; timeout=30.0, poll=0.5, on_wait=nothing) -> (Bool, Int)
 
 Poll ALL GPUs via NVML until one has sufficient free memory and low contention.
-No CUDA context creation needed - safe under multi-process contention.
+No CUDA context creation needed when NVML supports memory queries, making polling
+safe under multi-process contention. Otherwise queries CUDA on that device,
+restores the previous device and skips NVML contention checks for that device.
 
 # Arguments
 - `required_bytes`: Minimum bytes needed (1.5x safety margin applied internally)
@@ -91,24 +138,27 @@ function poll_gpu_nvml(required_bytes::Integer;
         best_free = 0
 
         for i in 0:(n-1)
-            dev = CUDA.NVML.Device(i)
-            info = CUDA.NVML.memory_info(dev)
+            nvml_free = nvml_free_memory(i)
+            free_mem = @something(nvml_free, cuda_free_memory(i))
 
             # Not enough memory on this device
-            info.free < required_with_margin && continue
+            free_mem < required_with_margin && continue
 
             # Check contention: other processes on this GPU
-            procs = CUDA.NVML.compute_processes(dev)
-            other_procs = length(procs) - (getpid() in keys(procs) ? 1 : 0)
+            if nvml_free !== nothing
+                dev = CUDA.NVML.Device(i)
+                procs = CUDA.NVML.compute_processes(dev)
+                other_procs = length(procs) - (getpid() in keys(procs) ? 1 : 0)
 
-            if other_procs > 0
-                rates = CUDA.NVML.utilization_rates(dev)
-                rates.compute > 0.9 && continue  # GPU saturated, skip
+                if other_procs > 0
+                    rates = CUDA.NVML.utilization_rates(dev)
+                    rates.compute > 0.9 && continue  # GPU saturated, skip
+                end
             end
 
             # This GPU is available - track best (most free memory)
-            if info.free > best_free
-                best_free = info.free
+            if free_mem > best_free
+                best_free = free_mem
                 best_device = i
             end
         end
@@ -120,7 +170,7 @@ function poll_gpu_nvml(required_bytes::Integer;
         # Callback for progress reporting
         if on_wait !== nothing
             # Report best available across all GPUs for visibility
-            max_free = maximum(CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(n-1))
+            max_free = maximum(gpu_free_memory(i) for i in 0:(n-1))
             on_wait(time() - start, max_free, required_bytes)
         end
 
@@ -180,9 +230,10 @@ end
 
 Select compute backend with two-layer GPU contention handling.
 
-Layer 1 (NVML polling): Scans all GPUs via NVML without creating CUDA contexts.
-Polls through timeout with jittered backoff. First GPU with sufficient free memory
-and low contention wins. Safe under multi-process contention.
+Layer 1 (NVML polling): Scans all GPUs via NVML without creating CUDA contexts
+when supported. If NVML cannot report memory, queries CUDA on that device and
+skips its NVML contention checks. Polls through timeout with jittered backoff.
+First GPU with sufficient free memory and low contention wins.
 
 Layer 2 (runtime try/catch): Applied by caller for :auto mode. If CUDA errors
 occur during processing despite NVML pre-check, falls back to CPU.
@@ -200,7 +251,7 @@ occur during processing despite NVML pre-check, falls back to CPU.
 # Behavior
 - `:cpu` - Returns (:cpu, -1) immediately
 - `:gpu` - NVML poll for device, then CUDA wait_for_gpu_memory. Errors if unavailable/timeout
-- `:auto` - NVML poll for device with timeout, falls back to (:cpu, -1) with warning
+- `:auto` - Poll with timeout; query errors or timeout fall back to (:cpu, -1) with warning
 """
 function select_backend(backend::Symbol, required_bytes::Integer;
         auto_timeout::Real = 300.0,
@@ -217,7 +268,7 @@ function select_backend(backend::Symbol, required_bytes::Integer;
             error("GPU backend requested but CUDA is not functional")
         end
 
-        # NVML poll to find available device (no CUDA context)
+        # Poll to find an available device, preferring NVML
         available, device_id = poll_gpu_nvml(required_bytes; timeout=gpu_timeout, on_wait=on_wait)
         if !available
             error("No GPU available after $(gpu_timeout)s. " *
@@ -238,8 +289,14 @@ function select_backend(backend::Symbol, required_bytes::Integer;
             return (:cpu, -1)
         end
 
-        # NVML poll all GPUs - no CUDA context creation
-        available, device_id = poll_gpu_nvml(required_bytes; timeout=auto_timeout, on_wait=on_wait)
+        # Poll all GPUs, falling back to CPU if the device query fails
+        available, device_id = try
+            poll_gpu_nvml(required_bytes; timeout=auto_timeout, on_wait=on_wait)
+        catch e
+            is_gpu_query_error(e) || rethrow()
+            @warn "GPU device query failed, using CPU" exception=(e, catch_backtrace())
+            return (:cpu, -1)
+        end
         if available
             CUDA.device!(device_id)
             return (:gpu, device_id)

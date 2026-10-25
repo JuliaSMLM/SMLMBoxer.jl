@@ -15,15 +15,15 @@ Or access the complete API documentation programmatically:
 """
 module SMLMBoxer
 
-using NNlib
-using CUDA
-using cuDNN  # Required for NNlib's cuDNN backend
-using KernelAbstractions
-using SMLMData
+using NNlib: NNlib
+using CUDA: CUDA, CUDABackend, CuArray
+using cuDNN: cuDNN  # Required for NNlib's cuDNN backend
+using KernelAbstractions: KernelAbstractions, @index, @kernel, @ndrange, CPU
 using Statistics: mean  # For mean gain/QE in threshold calculation
 
 # Re-export ROIBatch and SingleROI from SMLMData for convenience
-using SMLMData: ROIBatch, SingleROI, AbstractSMLMConfig, AbstractSMLMInfo
+using SMLMData: SMLMData, AbstractCamera, IdealCamera, SCMOSCamera, ROIBatch, SingleROI,
+    AbstractSMLMConfig, AbstractSMLMInfo
 export getboxes, ROIBatch, SingleROI, BoxerConfig, BoxesInfo, recommend_batch_size
 
 include("gpu.jl")

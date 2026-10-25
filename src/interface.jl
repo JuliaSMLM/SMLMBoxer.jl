@@ -34,10 +34,14 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 - `backend::Symbol`: Compute backend - `:cpu`, `:gpu`, or `:auto` (default: `:auto`).
   - `:cpu` - Always use CPU
   - `:gpu` - Require GPU, wait for memory if needed (waits forever by default)
-  - `:auto` - Try GPU with timeout, fall back to CPU if memory unavailable
+  - `:auto` - Try GPU with timeout, fall back to CPU if memory unavailable or queries fail
 - `auto_timeout::Real`: Max seconds to wait for GPU memory in `:auto` mode (default: 300.0).
 - `gpu_timeout::Real`: Max seconds to wait for GPU memory in `:gpu` mode (default: Inf).
 - `on_wait::Function`: Optional callback `(elapsed, available, required) -> nothing` for wait progress.
+
+GPU memory queries use NVML when supported. Otherwise CUDA is queried on each device,
+restoring the previous device and skipping NVML contention checks for that device.
+Other device query errors warn and fall back to CPU in `:auto` mode, or propagate in `:gpu`.
 
 # Returns
 Tuple of `(ROIBatch, BoxesInfo)`:
@@ -282,13 +286,21 @@ function _getboxes_impl(args::GetBoxesArgs)
       # Handles all failure modes: no free memory, TOCTOU context race, runtime OOM
       timeout = args.backend == :auto ? args.auto_timeout : args.gpu_timeout
       deadline = time() + timeout
+      gpu_query_failed = false
 
       while !gpu_succeeded && time() < deadline
           remaining = max(0.0, deadline - time())
 
-          # Poll NVML for available GPU
-          available, dev_id = poll_gpu_nvml(min_memory_needed;
-              timeout=remaining, on_wait=args.on_wait)
+          # Poll for an available GPU, preferring NVML
+          available, dev_id = try
+              poll_gpu_nvml(min_memory_needed;
+                  timeout=remaining, on_wait=args.on_wait)
+          catch e
+              (args.backend == :gpu || !is_gpu_query_error(e)) && rethrow()
+              @warn "GPU device query failed, using CPU" exception=(e, catch_backtrace())
+              gpu_query_failed = true
+              break
+          end
           !available && break
 
           try
@@ -314,7 +326,7 @@ function _getboxes_impl(args::GetBoxesArgs)
           if args.backend == :gpu
               error("GPU processing failed after $(timeout)s. " *
                     "Required: $(Base.format_bytes(min_memory_needed))")
-          else
+          elseif !gpu_query_failed
               @warn "GPU unavailable after $(timeout)s, using CPU"
           end
       end

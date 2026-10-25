@@ -11,11 +11,14 @@ Part of the [JuliaSMLM](https://github.com/JuliaSMLM) ecosystem. SMLMBoxer handl
 ## Commands
 
 ```bash
-# Run tests
+# Core is the default (fast CPU tests)
 julia --project -e 'using Pkg; Pkg.test()'
 
-# Run tests on GPU server
-ssh descent "cd ~/julia_shared_dev/SMLMBoxer && julia --project -e 'using Pkg; Pkg.test()'"
+# Select a group, or every group this machine can run
+GROUP=QA julia --project -e 'using Pkg; Pkg.test()'
+GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'
+GROUP=Long julia --project -e 'using Pkg; Pkg.test()'
+GROUP=Everything julia --project -e 'using Pkg; Pkg.test()'
 
 # Quick REPL check
 julia --project -e 'using SMLMBoxer; println("loaded")'

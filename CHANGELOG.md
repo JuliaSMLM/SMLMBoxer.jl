@@ -8,6 +8,26 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-25
+
+### Changed
+- Tests use the lab's grouped layout: Core runs on GitHub CI; GPU and Long run on lab
+  machines and are recorded as the `lab/tests` commit status. CI uses the lab's shared
+  workflow with QA and a downgrade job. The docs site is published from release tags.
+- Compat floors are CUDA 5.9, KernelAbstractions 0.9.38 and NNlib 0.9.25: the oldest
+  versions the downgrade job tests. CUDA 6 remains supported.
+
+### Fixed
+- `getboxes` threw `NVMLError: Not Supported (code 3)` for both `backend=:auto` and
+  `backend=:gpu` on the NVIDIA DGX Spark GB10, whose driver does not report memory through
+  NVML. When NVML cannot report a GPU's memory (not supported, no NVML library, or a Tegra
+  board), SMLMBoxer now asks CUDA for that GPU's free memory and skips the NVML contention
+  check for it; `recommend_batch_size` does the same. On the GB10 both backends now run on
+  the GPU. Under `backend=:auto`, any other NVML or CUDA error from the GPU query warns and
+  falls back to the CPU; under `backend=:gpu` it is thrown. A regression test, run on
+  machines with a GPU, simulates both NVML failures in a separate Julia process and checks
+  the backend chosen and the boxes against `backend=:cpu` (#24).
+
 ## [0.3.1] - 2026-10-17
 
 ### Changed
