@@ -10,6 +10,13 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [0.3.2] - 2026-10-25
 
+### Changed
+- Tests use the lab's grouped layout: Core runs on GitHub CI; GPU and Long run on lab
+  machines and are recorded as the `lab/tests` commit status. CI uses the lab's shared
+  workflow with QA and a downgrade job. The docs site is published from release tags.
+- Compat floors are CUDA 5.9, KernelAbstractions 0.9.38 and NNlib 0.9.25: the oldest
+  versions the downgrade job tests. CUDA 6 remains supported.
+
 ### Fixed
 - `getboxes` threw `NVMLError: Not Supported (code 3)` for both `backend=:auto` and
   `backend=:gpu` on the NVIDIA DGX Spark GB10, whose driver does not report memory through
