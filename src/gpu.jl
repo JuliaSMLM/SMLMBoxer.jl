@@ -17,12 +17,22 @@ Check if CUDA is available. Wrapper for CUDA.functional().
 has_cuda() = CUDA.functional()
 
 """
+    is_gpu_query_error(e) -> Bool
+
+True when `e` comes from querying a GPU (an NVML error, or a CUDA driver error such as a
+failed context creation). `:auto` falls back to the CPU on these; anything else propagates.
+"""
+is_gpu_query_error(e) = e isa CUDA.NVML.NVMLError || e isa CUDA.CuError
+
+"""
     nvml_free_memory(i) -> Union{Int, Nothing}
 
 Return free memory in bytes on GPU `i` (0-based), using NVML without a CUDA context.
-Return `nothing` if NVML reports `NVML_ERROR_NOT_SUPPORTED`. Other errors propagate.
+Return `nothing` if NVML is unavailable or reports `NVML_ERROR_NOT_SUPPORTED`.
+Other errors propagate.
 """
 function nvml_free_memory(i::Integer)
+    CUDA.NVML.has_nvml() || return nothing
     try
         return CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free
     catch e
@@ -283,6 +293,7 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         available, device_id = try
             poll_gpu_nvml(required_bytes; timeout=auto_timeout, on_wait=on_wait)
         catch e
+            is_gpu_query_error(e) || rethrow()
             @warn "GPU device query failed, using CPU" exception=(e, catch_backtrace())
             return (:cpu, -1)
         end

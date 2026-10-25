@@ -11,11 +11,12 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 ### Fixed
 - `getboxes` threw `NVMLError: Not Supported` with `backend=:auto` and `backend=:gpu`
   on the NVIDIA DGX Spark GB10, where NVML cannot report memory. GPU memory queries now
-  use CUDA on those devices, restore the previous device and skip NVML contention checks.
+  use CUDA when NVML is unavailable or cannot report memory, restore the previous device
+  and skip NVML contention checks.
   Other device query errors warn and fall back to CPU in `:auto` mode and propagate in
   `:gpu` mode. A regression test, run on machines with a GPU, simulates both NVML failures
-  in a child Julia process and checks the selected backend and boxes against CPU results;
-  a direct memory query test checks the helper on the real GPU.
+  in a child Julia process and checks the selected backend and boxes against CPU results.
+  The same child checks CUDA memory queries and restoration of the previous device.
 
 ## [0.3.1] - 2026-10-17
 

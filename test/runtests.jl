@@ -413,6 +413,14 @@ using Test
             CUDA.NVML.utilization_rates(dev::CUDA.NVML.Device) =
                 error("Unexpected NVML utilization query")
 
+            CUDA.device!(0)
+            j = length(CUDA.devices()) - 1
+            free_mem = SMLMBoxer.gpu_free_memory(j)
+            valid_memory = free_mem isa Integer &&
+                0 < free_mem <= CUDA.totalmem(CuDevice(j))
+            println("helper|memory=", valid_memory,
+                "|restored=", CUDA.device() == CuDevice(0))
+
             function same_boxes(roi, reference)
                 return roi.data == reference.data &&
                     roi.x_corners == reference.x_corners &&
@@ -456,19 +464,15 @@ using Test
             """
             cmd = `$(Base.julia_cmd()) --startup-file=no
                    --project=$(Base.active_project()) -e $script`
+            depot_path = join(DEPOT_PATH, Sys.iswindows() ? ';' : ':')
+            cmd = addenv(cmd, "JULIA_DEPOT_PATH" => depot_path)
             output = IOBuffer()
             process = run(pipeline(ignorestatus(cmd); stdout=output))
             @test success(process)
             lines = split(String(take!(output)), '\n')
+            @test "helper|memory=true|restored=true" in lines
             @test "not_supported|auto=gpu,true|gpu=gpu,true" in lines
             @test "other_failure|auto=cpu,true|gpu=nvml_unknown" in lines
-
-            # Query the actual driver as well as the simulated failures above.
-            device = CUDA.device()
-            free_mem = SMLMBoxer.gpu_free_memory(CUDA.deviceid(device))
-            @test free_mem isa Integer
-            @test 0 < free_mem <= CUDA.total_memory()
-            @test CUDA.device() == device
         end
     end
 

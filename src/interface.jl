@@ -296,7 +296,7 @@ function _getboxes_impl(args::GetBoxesArgs)
               poll_gpu_nvml(min_memory_needed;
                   timeout=remaining, on_wait=args.on_wait)
           catch e
-              args.backend == :gpu && rethrow()
+              (args.backend == :gpu || !is_gpu_query_error(e)) && rethrow()
               @warn "GPU device query failed, using CPU" exception=(e, catch_backtrace())
               gpu_query_failed = true
               break
