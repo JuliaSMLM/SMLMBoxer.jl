@@ -472,7 +472,10 @@ using Test
             lines = split(String(take!(output)), '\n')
             @test "helper|memory=true|restored=true" in lines
             @test "not_supported|auto=gpu,true|gpu=gpu,true" in lines
-            @test "other_failure|auto=cpu,true|gpu=nvml_unknown" in lines
+            # Without a usable NVML (Tegra, no library) the NVML error is never raised
+            other_failure = CUDA.NVML.has_nvml() ? "auto=cpu,true|gpu=nvml_unknown" :
+                "auto=gpu,true|gpu=gpu,true"
+            @test "other_failure|$other_failure" in lines
         end
     end
 
