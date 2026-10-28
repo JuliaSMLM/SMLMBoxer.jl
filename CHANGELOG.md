@@ -8,6 +8,14 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
+### Fixed
+- With `CUDA_VISIBLE_DEVICES` set, SMLMBoxer could read the wrong GPU's memory, processes
+  and utilization, waiting for or falling back from a free GPU, or starting on a full one.
+  NVML queries now resolve each CUDA ordinal by its device UUID, including MIG devices.
+  A regression test, run on machines with a GPU and NVML, checks that every visible CUDA
+  device maps to the same UUID in NVML; the GPU wait tests cover waiting and fallback on
+  a full GPU with `CUDA_VISIBLE_DEVICES=1` on a two-GPU host.
+
 ## [0.3.2] - 2026-10-25
 
 ### Changed
