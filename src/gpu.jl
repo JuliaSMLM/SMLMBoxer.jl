@@ -25,16 +25,28 @@ failed context creation). `:auto` falls back to the CPU on these; anything else 
 is_gpu_query_error(e) = e isa CUDA.NVML.NVMLError || e isa CUDA.CuError
 
 """
+    nvml_device(i) -> CUDA.NVML.Device
+
+Return the NVML device for GPU `i`, a 0-based CUDA ordinal, without creating a context.
+Resolve the CUDA device's UUID so `CUDA_VISIBLE_DEVICES` and MIG devices are respected.
+"""
+function nvml_device(i::Integer)
+    dev = CUDA.CuDevice(i)
+    uuid = CUDA.uuid(dev)
+    return CUDA.NVML.Device(uuid; mig = uuid != CUDA.parent_uuid(dev))
+end
+
+"""
     nvml_free_memory(i) -> Union{Int, Nothing}
 
-Return free memory in bytes on GPU `i` (0-based), using NVML without a CUDA context.
-Return `nothing` if NVML is unavailable or reports `NVML_ERROR_NOT_SUPPORTED`.
-Other errors propagate.
+Return free memory in bytes on GPU `i`, a 0-based CUDA ordinal, using NVML without a
+CUDA context. Return `nothing` if NVML is unavailable or reports
+`NVML_ERROR_NOT_SUPPORTED`. Other errors propagate.
 """
 function nvml_free_memory(i::Integer)
     CUDA.NVML.has_nvml() || return nothing
     try
-        return CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free
+        return CUDA.NVML.memory_info(nvml_device(i)).free
     catch e
         if !(e isa CUDA.NVML.NVMLError &&
                 e.code == CUDA.NVML.NVML_ERROR_NOT_SUPPORTED)
@@ -47,16 +59,17 @@ end
 """
     cuda_free_memory(i) -> Int
 
-Return free memory in bytes on GPU `i` (0-based) from CUDA. Activates the device (creating
-its context if needed) for the query and restores the previous device.
+Return free memory in bytes on GPU `i`, a 0-based CUDA ordinal, from CUDA. Activates the
+device (creating its context if needed) for the query and restores the previous device.
 """
 cuda_free_memory(i::Integer) = CUDA.device!(CUDA.free_memory, i)
 
 """
     gpu_free_memory(i) -> Int
 
-Return free memory in bytes on GPU `i` (0-based), using `nvml_free_memory` when supported.
-Otherwise query CUDA on that device and restore the previous device. Other errors propagate.
+Return free memory in bytes on GPU `i`, a 0-based CUDA ordinal, using `nvml_free_memory`
+when supported. Otherwise query CUDA on that device and restore the previous device. Other
+errors propagate.
 """
 gpu_free_memory(i::Integer) = @something(nvml_free_memory(i), cuda_free_memory(i))
 
@@ -65,7 +78,7 @@ gpu_free_memory(i::Integer) = @something(nvml_free_memory(i), cuda_free_memory(i
 
 Find the GPU with the most free memory and switch to it.
 
-Returns the device index (0-based). On single-GPU systems, returns 0 immediately.
+Returns the CUDA ordinal (0-based). On single-GPU systems, returns 0 immediately.
 
 Uses NVML to query free memory on each device without creating CUDA contexts,
 avoiding `cuDevicePrimaryCtxRetain` OOM errors under multi-process contention.
@@ -100,7 +113,7 @@ end
 """
     poll_gpu_nvml(required_bytes; timeout=30.0, poll=0.5, on_wait=nothing) -> (Bool, Int)
 
-Poll ALL GPUs via NVML until one has sufficient free memory and low contention.
+Poll all CUDA-visible GPUs via NVML until one has sufficient free memory and low contention.
 No CUDA context creation needed when NVML supports memory queries, making polling
 safe under multi-process contention. Otherwise queries CUDA on that device,
 restores the previous device and skips NVML contention checks for that device.
@@ -112,7 +125,8 @@ restores the previous device and skips NVML contention checks for that device.
 - `on_wait`: Optional callback(elapsed, best_available, required) called each poll
 
 # Returns
-- `(true, device_id)` if a GPU became available, `(false, -1)` if timeout reached
+- `(true, device_id)` with a 0-based CUDA ordinal if a GPU became available,
+  `(false, -1)` if timeout reached
 
 # Contention Detection
 A GPU is considered contended when other processes are present AND either:
@@ -146,7 +160,7 @@ function poll_gpu_nvml(required_bytes::Integer;
 
             # Check contention: other processes on this GPU
             if nvml_free !== nothing
-                dev = CUDA.NVML.Device(i)
+                dev = nvml_device(i)
                 procs = CUDA.NVML.compute_processes(dev)
                 other_procs = length(procs) - (getpid() in keys(procs) ? 1 : 0)
 
@@ -246,7 +260,8 @@ occur during processing despite NVML pre-check, falls back to CPU.
 - `on_wait`: Optional callback(elapsed, available, required)
 
 # Returns
-- `(backend::Symbol, device_id::Int)` - selected backend and GPU device (0-based, -1 for CPU)
+- `(backend::Symbol, device_id::Int)` - selected backend and CUDA ordinal (0-based,
+  -1 for CPU)
 
 # Behavior
 - `:cpu` - Returns (:cpu, -1) immediately
