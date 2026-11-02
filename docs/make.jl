@@ -19,7 +19,7 @@ makedocs(;
         "Examples" => "examples.md",
         "API" => "api.md",
     ],
-    doctest = false,  # Set to true to enable doctests after verifying examples
+    doctest = false,  # QA runs docstring jldoctests (decision 0018); pages use @example
     checkdocs = :exports,  # Only check that exported items are documented
 )
 
