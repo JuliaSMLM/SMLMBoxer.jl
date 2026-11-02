@@ -36,10 +36,10 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 - GPU-accelerated via KernelAbstractions.jl (device-agnostic kernels)
 
 ### GPU Acceleration and Scheduling
-- Standard DoG: NNlib on CPU, KernelAbstractions kernel on GPU. On 500 frames, compared
-  with 32 CPU threads, the GPU is about 2-10x faster with an IdealCamera and about
-  20-80x faster with an SCMOSCamera, measured on AMD Ryzen 9 5950X / NVIDIA RTX 4090
-  with SMLMBoxer 0.3.4, CUDA.jl 6.5.0 and KernelAbstractions 0.10.4
+- Standard DoG: NNlib on CPU, KernelAbstractions kernel on GPU. On 500 frames at
+  256×256, IdealCamera GPU throughput is 13,805 images/s versus 876 with 32 CPU threads,
+  measured on AMD Ryzen 9 5950X / NVIDIA RTX 4090 with SMLMBoxer 0.4.0, CUDA.jl 6.5.0
+  and KernelAbstractions 0.10.4
 - Variance-weighted: KernelAbstractions custom kernels (same code for CPU/GPU)
 - Multi-GPU support: polling selects the eligible GPU with the most free memory
 
@@ -63,7 +63,8 @@ dependency; SMLMBoxer does not use Reactant or need setup for it.
    at once; under `:gpu`, raise the original error at once
 6. On timeout: `:auto` falls back to CPU, `:gpu` errors with the failed batch size and
    memory need
-7. On success: reclaim the GPU memory pool (see the CUDA.jl 6.5.0 caveat below)
+7. On success: release explicitly freed GPU memory without full garbage collection
+   (see the CUDA.jl 6.5.x caveat below)
 
 **Backend modes:**
 - `:cpu` - Always CPU, no GPU involvement
@@ -432,16 +433,20 @@ Implements optimal inverse variance weighting for spatially-varying noise.
   the timeout. Any other GPU failure uses the CPU at once under `:auto`, or raises the
   original error at once under `:gpu`. Each failed attempt tries to release memory;
   cleanup errors cannot mask the original error or prevent CPU fallback.
-- **Memory Pool Reclaim**: Calls `GC.gc() + CUDA.reclaim()` after successful GPU processing
-  and attempts it after failures. With CUDA.jl 6.5.0, freed pool memory stays reserved
-  until the process exits, unavailable to other processes; see the changelog's known issue.
+- **Memory Pool Release**: Explicitly frees owned GPU arrays within each batch, including
+  on errors. Successful calls synchronize, purge caches and trim the pool without full
+  garbage collection on CUDA.jl 6; CUDA.jl 5 uses its GC-free `CUDA.reclaim()`. Failed
+  attempts still use `GC.gc(false) + CUDA.reclaim()`. Release after a short call takes
+  0.013 ms on the RTX 4090 under CUDA.jl 6.5.0, which retains freed pool memory until
+  process exit (see the changelog's known issue). Under CUDA.jl 6.4.2, release returns
+  memory to the driver: about 43 ms per 2 GiB released, compared with 200 ms for
+  `CUDA.reclaim()` on the same allocation workload.
 - **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting
-- **Typical Speedup**: On 500 frames, compared with 32 CPU threads, the GPU is about
-  2-10x faster with an IdealCamera and about 20-80x faster with an SCMOSCamera, measured
-  on AMD Ryzen 9 5950X / NVIDIA RTX 4090 with SMLMBoxer 0.3.4, CUDA.jl 6.5.0 and
-  KernelAbstractions 0.10.4. The fixed cost per GPU call was about 60 ms on an RTX 4090,
-  mostly releasing the GPU memory pool after the call, whatever the stack size, so GPU
-  throughput depends on stack length. At 256×256 with an IdealCamera, the CPU and GPU
-  break even at about 10 frames on one CPU thread and about 50 frames on 32 threads;
-  below that use `backend = :cpu` if speed matters. 0.3.3 has the same fixed cost.
+- **Typical Speedup**: A warmed-up 256×256×10 GPU call takes about 0.75 ms in 0.4.0,
+  down from about 57 ms in 0.3.4 on the RTX 4090 (medians of 0.73–0.84 ms across
+  CUDA.jl 6.4.2 and 6.5.0). The GPU wins from one frame at every size tested (128,
+  256 and 512 px), with either camera path and either one or 32 CPU threads on the
+  AMD Ryzen 9 5950X. On 500 frames at 256×256, GPU throughput is 13,805 images/s with
+  an IdealCamera and 10,643 with an SCMOSCamera, versus 876 and 76 with 32 CPU threads,
+  measured with CUDA.jl 6.5.0 and KernelAbstractions 0.10.4.

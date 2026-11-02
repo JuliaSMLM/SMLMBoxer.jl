@@ -37,9 +37,20 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   The lab caller already tracks this offset; no new keyword is needed.
 
 ### Changed
+- The release after each successful GPU call no longer runs a full garbage collection.
+  Owned GPU arrays are explicitly freed within each batch, also on errors. CUDA.jl 6
+  synchronizes, purges caches and trims the pool; CUDA.jl 5 retains its GC-free reclaim.
+  A warmed-up 256×256×10 GPU call on the RTX 4090 falls from about 57 ms in 0.3.4 to
+  0.75 ms (medians of 0.73–0.84 ms across CUDA.jl 6.4.2 and 6.5.0). IdealCamera GPU
+  throughput on 500 frames at 256×256 rises from 5,329 to 13,805 images/s. The GPU wins
+  from one frame at all tested sizes (128, 256 and 512 px), with either one or 32 CPU
+  threads on the AMD Ryzen 9 5950X. Release after a short call takes 0.013 ms under
+  CUDA.jl 6.5.0, which still retains pool memory (known issue below). Under 6.4.2,
+  release returns memory to the driver: about 43 ms per 2 GiB, compared with 200 ms for
+  `CUDA.reclaim()` on the same allocation workload.
 - Removed unused internal `find_best_gpu`, `select_backend`, `wait_for_gpu_memory`,
   and `estimate_gpu_memory` helpers and the discarded per-box camera ROI construction.
-  The per-frame memory estimator and GPU memory cleanup are unchanged.
+  The per-frame memory estimator is unchanged.
 
 ## [0.3.4] - 2026-11-02
 

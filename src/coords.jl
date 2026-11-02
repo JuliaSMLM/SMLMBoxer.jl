@@ -54,22 +54,31 @@ transfers only the sparse indices and values (~1.2 MB for ~100K maxima).
 function _gpu_maxima2coords(localmaximage::CuArray{T}) where T<:Real
     nrows, ncols, _, nframes = size(localmaximage)
 
-    # Flatten to 1D for findall — GPU prefix-sum compaction
-    flat = reshape(localmaximage, :)
-    mask = flat .!= zero(T)
-    nz_indices = findall(mask)  # CuArray{Int64,1} — stays on GPU
+    flat = mask = nz_indices = nz_values = nothing
+    local nz_indices_cpu, nz_values_cpu
+    completed = false
+    try
+        # The reshape owns a reference to storage, not the caller's array object.
+        flat = reshape(localmaximage, :)
+        mask = flat .!= zero(T)
+        nz_indices = findall(mask)
+        CUDA.unsafe_free!(mask)
+        mask = nothing
 
-    # Early return if no maxima found
-    if isempty(nz_indices)
-        return [zeros(Float32, 0, 4) for _ in 1:nframes]
+        if isempty(nz_indices)
+            completed = true
+            return [zeros(Float32, 0, 4) for _ in 1:nframes]
+        end
+
+        nz_values = flat[nz_indices]
+        # Transfer only sparse data to CPU (~1.2 MB vs ~1 GB).
+        nz_indices_cpu = Array(nz_indices)
+        nz_values_cpu = Array(nz_values)
+        completed = true
+    finally
+        free_gpu_arrays(mask, nz_indices, nz_values,
+            flat === localmaximage ? nothing : flat; failed=!completed)
     end
-
-    # Gather values at nonzero indices (GPU gather)
-    nz_values = flat[nz_indices]
-
-    # Transfer only sparse data to CPU (~1.2 MB vs ~1 GB)
-    nz_indices_cpu = Array(nz_indices)
-    nz_values_cpu = Array(nz_values)
 
     # Convert linear indices to (row, col, 1, frame) subscripts
     ci = CartesianIndices((nrows, ncols, 1, nframes))

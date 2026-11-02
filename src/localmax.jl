@@ -60,21 +60,29 @@ function genlocalmaximage(imagestack::AbstractArray{<:Real}, kernelsize::Int; mi
     end
 
     if use_gpu && CUDA.functional()
-        # Transfer to GPU if not already there
-        imagestack_gpu = imagestack isa CuArray ? imagestack : CuArray(imagestack)
-        nrows, ncols, _, nframes = size(imagestack_gpu)
-        plo = (kernelsize - 1) ÷ 2  # window offset; same for odd and even kernelsize
-
-        # KernelAbstractions max pooling - KEEP RESULT ON GPU
-        maxpooled = CUDA.zeros(eltype(imagestack_gpu), nrows, ncols, 1, nframes)
-        backend = CUDABackend()
-        kernel! = localmax_kernel!(backend)
-        kernel!(maxpooled, imagestack_gpu, plo, kernelsize, ndrange=(nrows, ncols, nframes))
-        KernelAbstractions.synchronize(backend)
-        maximage = (maxpooled .== imagestack_gpu)
-        localmaximage = (maximage .& (imagestack_gpu .> minval)) .* imagestack_gpu
-
-        return localmaximage  # Returns CuArray - keep on GPU!
+        input_gpu = maxpooled = localmaximage = nothing
+        completed = false
+        try
+            input = imagestack
+            if !(input isa CuArray)
+                input_gpu = CuArray(input)
+                input = input_gpu
+            end
+            nrows, ncols, _, nframes = size(input)
+            plo = (kernelsize - 1) ÷ 2
+            maxpooled = CUDA.zeros(eltype(input), nrows, ncols, 1, nframes)
+            backend = CUDABackend()
+            kernel! = localmax_kernel!(backend)
+            kernel!(maxpooled, input, plo, kernelsize; ndrange=(nrows, ncols, nframes))
+            KernelAbstractions.synchronize(backend)
+            # Fuse the mask into the output to avoid a separate GPU Boolean array.
+            localmaximage = ((maxpooled .== input) .& (input .> minval)) .* input
+            completed = true
+            return localmaximage
+        finally
+            free_gpu_arrays(input_gpu, maxpooled, completed ? nothing : localmaximage;
+                failed=!completed)
+        end
     else
         # NNlib.maxpool CPU implementation
         maxpooled = NNlib.maxpool(imagestack, poolsize; pad=pad, stride=1)
@@ -104,7 +112,13 @@ function findlocalmax(imagestack::AbstractArray{<:Real}, kernelsize::Int; minval
     localmaximage = genlocalmaximage(imagestack, kernelsize; minval, use_gpu)
     if localmaximage isa CuArray
         # GPU sparse extraction: transfers ~1 MB instead of full array (~1 GB)
-        coords = _gpu_maxima2coords(localmaximage)
+        completed = false
+        try
+            coords = _gpu_maxima2coords(localmaximage)
+            completed = true
+        finally
+            free_gpu_arrays(localmaximage; failed=!completed)
+        end
     else
         coords = maxima2coords(localmaximage)
     end

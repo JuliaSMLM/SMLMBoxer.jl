@@ -37,6 +37,48 @@ is_gpu_resource_error(e) = e isa CUDA.OutOfGPUMemoryError ||
      e.code in (CUDA.ERROR_OUT_OF_MEMORY, CUDA.ERROR_DEVICE_UNAVAILABLE))
 
 """
+    free_gpu_arrays(arrays...; failed=false)
+
+Explicitly free owned CuArray temporaries, ignoring CPU arrays and `nothing`. Never pass
+borrowed arrays. Attempt every free even if one fails; on an already failed operation,
+preserve its original exception instead of replacing it with a cleanup error.
+"""
+function free_gpu_arrays(arrays...; failed::Bool=false)
+    first_error = nothing
+    for array in arrays
+        array isa CuArray || continue
+        try
+            CUDA.unsafe_free!(array)
+        catch e
+            first_error === nothing && (first_error = e)
+        end
+    end
+    !failed && first_error !== nothing && throw(first_error)
+    return nothing
+end
+
+"""
+    release_gpu_memory()
+
+Return explicitly freed GPU allocations to the driver after a successful call, without
+running garbage collection. CUDA.jl 6 requires device synchronization before purging
+caches, then another synchronization before trimming the pool. CUDA.jl 5 has no
+`RECLAIM_PURGE`; its default `reclaim()` synchronizes and trims without a full GC.
+CUDA.jl 6.5.x may retain pool memory despite this release (see CHANGELOG's known issue).
+"""
+function release_gpu_memory()
+    if isdefined(CUDA, :RECLAIM_PURGE)
+        CUDA.device_synchronize()
+        CUDA.reclaim(CUDA.RECLAIM_PURGE)
+        CUDA.device_synchronize()
+        CUDA.trim(CUDA.memory_pool(CUDA.device()))
+    else
+        CUDA.reclaim()
+    end
+    return nothing
+end
+
+"""
     reclaim_failed_gpu_attempt()
 
 Try to release allocations after a failed GPU attempt. A poisoned CUDA context may make

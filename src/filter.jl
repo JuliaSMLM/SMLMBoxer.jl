@@ -108,27 +108,45 @@ function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs; use_g
 
     # Check if we have an sCMOS camera with variance information
     if args.camera isa SCMOSCamera
-        # Use variance-weighted DoG filtering (returns CPU array)
-        filtered_stack = dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args; use_gpu)
+        filtered_stack = dog_filter_variance_weighted(
+            imagestack, sigma_small, sigma_large, args; use_gpu)
     else
         # Standard DoG filtering (may return CuArray if use_gpu=true)
         kernel_small, kernel_large = dog_kernel_pair(Float32(sigma_small), Float32(sigma_large))
         dog = kernel_small .- kernel_large
         if use_gpu && CUDA.functional()
-            backend = CUDABackend()
-            input = imagestack isa CuArray ? imagestack : CuArray(imagestack)
-            kernel_small = CuArray(kernel_small)
-            kernel_large = CuArray(kernel_large)
+            input_gpu = small_gpu = large_gpu = filtered_stack = nothing
+            completed = false
+            try
+                input = imagestack
+                if !(input isa CuArray)
+                    input_gpu = CuArray(input)
+                    input = input_gpu
+                end
+                small_gpu = CuArray(kernel_small)
+                large_gpu = CuArray(kernel_large)
+                filtered_stack = convolve(input, dog; use_gpu)
+                nrows, ncols, _, nframes = size(input)
+                backend = CUDABackend()
+                kernel! = dog_border_kernel!(backend)
+                kernel!(filtered_stack, input, small_gpu, large_gpu, size(dog, 1) ÷ 2;
+                        ndrange=(nrows, ncols, nframes))
+                KernelAbstractions.synchronize(backend)
+                completed = true
+            finally
+                free_gpu_arrays(input_gpu, small_gpu, large_gpu,
+                    completed ? nothing : filtered_stack; failed=!completed)
+            end
         else
             backend = CPU()
             input = imagestack
+            filtered_stack = convolve(input, dog; use_gpu=false)
+            nrows, ncols, _, nframes = size(input)
+            kernel! = dog_border_kernel!(backend)
+            kernel!(filtered_stack, input, kernel_small, kernel_large, size(dog, 1) ÷ 2;
+                    ndrange=(nrows, ncols, nframes))
+            KernelAbstractions.synchronize(backend)
         end
-        filtered_stack = convolve(input, dog; use_gpu)
-        nrows, ncols, _, nframes = size(input)
-        kernel! = dog_border_kernel!(backend)
-        kernel!(filtered_stack, input, kernel_small, kernel_large, size(dog, 1) ÷ 2;
-                ndrange=(nrows, ncols, nframes))
-        KernelAbstractions.synchronize(backend)
     end
 
     return filtered_stack  # May be CuArray if use_gpu=true
@@ -200,18 +218,33 @@ function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
     # Convert to match imagestack element type to avoid type mismatch
     variance_map = convert(Matrix{eltype(imagestack)}, get_variance_map(args.camera, (nrows, ncols)))
 
-    # Apply small Gaussian with variance weighting
-    filtered_small = convolve_variance_weighted(imagestack, variance_map,
-                                                Float32(sigma_small), use_gpu)
+    input_gpu = variance_gpu = filtered_small = filtered_large = nothing
+    completed = false
+    try
+        input = imagestack
+        if use_gpu && CUDA.functional()
+            # Share uploads between both convolutions; neither convolution owns them.
+            if !(input isa CuArray)
+                input_gpu = CuArray(input)
+                input = input_gpu
+            end
+            variance_gpu = CuArray(variance_map)
+            variance_map = variance_gpu
+        end
 
-    # Apply large Gaussian with variance weighting
-    filtered_large = convolve_variance_weighted(imagestack, variance_map,
-                                                Float32(sigma_large), use_gpu)
+        filtered_small = convolve_variance_weighted(input, variance_map,
+                                                    Float32(sigma_small), use_gpu)
+        filtered_large = convolve_variance_weighted(input, variance_map,
+                                                    Float32(sigma_large), use_gpu)
 
-    # Difference of Gaussians (in-place to avoid allocating a third full-size array)
-    filtered_small .-= filtered_large
-
-    return filtered_small
+        # Difference in place; ownership of the small result passes to the caller.
+        filtered_small .-= filtered_large
+        completed = true
+        return filtered_small
+    finally
+        free_gpu_arrays(input_gpu, variance_gpu, filtered_large,
+            completed ? nothing : filtered_small; failed=!completed)
+    end
 end
 
 """
@@ -345,20 +378,30 @@ function convolve_variance_weighted(imagestack::AbstractArray{T},
     if use_gpu && CUDA.functional()
         backend = CUDABackend()
 
-        # Move to GPU if not already there (same pattern as convolve())
-        imagestack_gpu = imagestack isa CuArray ? imagestack : CuArray(imagestack)
-        variance_gpu = variance_map isa CuArray ? variance_map : CuArray(variance_map)
-
-        # Allocate output on GPU - stays on GPU like standard path
-        filtered_gpu = CUDA.zeros(T, nrows, ncols, 1, nframes)
-
-        # Single batched kernel launch for all frames (eliminates per-frame launch overhead)
-        kernel! = variance_weighted_gaussian_kernel_batched!(backend)
-        kernel!(filtered_gpu, imagestack_gpu, variance_gpu, sigma, winsize, nrows, ncols,
-                ndrange=(nrows, ncols, nframes))
-
-        KernelAbstractions.synchronize(backend)
-        return filtered_gpu  # Stay on GPU - matches convolve() behavior
+        input_gpu = variance_gpu = filtered_gpu = nothing
+        completed = false
+        try
+            input = imagestack
+            variance = variance_map
+            if !(input isa CuArray)
+                input_gpu = CuArray(input)
+                input = input_gpu
+            end
+            if !(variance isa CuArray)
+                variance_gpu = CuArray(variance)
+                variance = variance_gpu
+            end
+            filtered_gpu = CUDA.zeros(T, nrows, ncols, 1, nframes)
+            kernel! = variance_weighted_gaussian_kernel_batched!(backend)
+            kernel!(filtered_gpu, input, variance, sigma, winsize, nrows, ncols;
+                    ndrange=(nrows, ncols, nframes))
+            KernelAbstractions.synchronize(backend)
+            completed = true
+            return filtered_gpu
+        finally
+            free_gpu_arrays(input_gpu, variance_gpu, completed ? nothing : filtered_gpu;
+                failed=!completed)
+        end
     else
         backend = CPU()
         filtered = similar(imagestack)
@@ -435,18 +478,27 @@ function convolve(imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; us
     pad = (p, p, p, p)
 
     if use_gpu && CUDA.functional()
-        # Transfer to GPU if not already there
-        imagestack_gpu = imagestack isa CuArray ? imagestack : CuArray(imagestack)
-        weights_gpu = CuArray(weights)
-        nrows, ncols, _, nframes = size(imagestack_gpu)
-
-        # KernelAbstractions direct convolution - KEEP RESULT ON GPU
-        filtered_stack = CUDA.zeros(eltype(imagestack_gpu), nrows, ncols, 1, nframes)
-        backend = CUDABackend()
-        kernel! = dog_conv_kernel!(backend)
-        kernel!(filtered_stack, imagestack_gpu, weights_gpu, p;
-                ndrange=(nrows, ncols, nframes))
-        KernelAbstractions.synchronize(backend)
+        input_gpu = weights_gpu = filtered_stack = nothing
+        completed = false
+        try
+            input = imagestack
+            if !(input isa CuArray)
+                input_gpu = CuArray(input)
+                input = input_gpu
+            end
+            weights_gpu = CuArray(weights)
+            nrows, ncols, _, nframes = size(input)
+            filtered_stack = CUDA.zeros(eltype(input), nrows, ncols, 1, nframes)
+            backend = CUDABackend()
+            kernel! = dog_conv_kernel!(backend)
+            kernel!(filtered_stack, input, weights_gpu, p;
+                    ndrange=(nrows, ncols, nframes))
+            KernelAbstractions.synchronize(backend)
+            completed = true
+        finally
+            free_gpu_arrays(input_gpu, weights_gpu, completed ? nothing : filtered_stack;
+                failed=!completed)
+        end
     else
         # NNlib.conv CPU implementation
         filtered_stack = NNlib.conv(imagestack, weights; pad=pad, stride=1)
@@ -454,4 +506,3 @@ function convolve(imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; us
 
     return filtered_stack  # Returns CuArray if use_gpu, Array otherwise
 end
-
