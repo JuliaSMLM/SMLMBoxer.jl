@@ -18,7 +18,8 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ### Fixed
 - Overlap removal now applies to every frame of a stack; previously it applied only to
-  frame 1 (#19).
+  frame 1 (#19). Overlap removal no longer allocates per pair of boxes, so running it on
+  every frame costs about as much as the old frame-1-only pass did per frame.
 - `getboxes` retries only GPU memory and CUDA driver errors until the timeout. Other
   processing errors, such as a readnoise map with the wrong size, now release memory and
   raise the original error at once in both `backend=:gpu` and `backend=:auto`, instead of
