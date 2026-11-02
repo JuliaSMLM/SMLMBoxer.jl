@@ -39,9 +39,9 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   frame 1 (#19). Overlap removal no longer allocates per pair of boxes (a 600-box frame
   takes 0.25 ms instead of 19 ms), so the fix costs nothing measurable at the default
   `min_photons`; with 500-700 boxes per frame it adds 0.2-0.35 ms per frame.
-- `getboxes` retries only GPU memory and CUDA driver errors until the timeout. Other
-  processing errors, such as a readnoise map with the wrong size, now release memory and
-  raise the original error at once in both `backend=:gpu` and `backend=:auto`, instead of
+- `getboxes` retries GPU memory errors and an unavailable device until the timeout; any
+  other error is raised at once. Errors such as a readnoise map with the wrong size release
+  memory and raise the original error in both `backend=:gpu` and `backend=:auto`, instead of
   retrying until the timeout or forever with the default `gpu_timeout=Inf` (#20).
 - Even local-maximum windows, such as boxsize 7 with overlap 3, no longer warn that
   cuDNN does not support asymmetric padding. The GPU window now matches the CPU's

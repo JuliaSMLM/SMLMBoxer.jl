@@ -27,10 +27,13 @@ is_gpu_query_error(e) = e isa CUDA.NVML.NVMLError || e isa CUDA.CuError
 """
     is_gpu_resource_error(e) -> Bool
 
-True for GPU memory or CUDA driver errors, including context-creation races. These are
-retried until the timeout; any other processing error is raised at once.
+True only for GPU memory errors and an unavailable device, including context-creation
+races. GPU memory errors and an unavailable device are retried until the timeout;
+any other error is raised at once.
 """
-is_gpu_resource_error(e) = e isa CUDA.OutOfGPUMemoryError || e isa CUDA.CuError
+is_gpu_resource_error(e) = e isa CUDA.OutOfGPUMemoryError ||
+    (e isa CUDA.CuError &&
+     e.code in (CUDA.ERROR_OUT_OF_MEMORY, CUDA.ERROR_DEVICE_UNAVAILABLE))
 
 """
     nvml_device(i) -> CUDA.NVML.Device
@@ -258,8 +261,8 @@ skips its NVML contention checks. Polls through timeout with jittered backoff.
 First GPU with sufficient free memory and low contention wins.
 
 Layer 2 (runtime try/catch): Applied by `getboxes` for :auto and :gpu modes. GPU memory
-and CUDA driver errors during processing are retried until the timeout. Any other error
-is raised at once. On timeout, :auto falls back to CPU and :gpu errors.
+errors and an unavailable device are retried until the timeout; any other error is raised
+at once. On timeout, :auto falls back to CPU and :gpu errors.
 
 # Arguments
 - `backend`: :cpu, :gpu, or :auto

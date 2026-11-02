@@ -44,8 +44,8 @@ GPU memory queries use NVML when supported. Otherwise CUDA is queried on each de
 restoring the previous device and skipping NVML contention checks for that device.
 Other device query errors warn and fall back to CPU in `:auto` mode, or propagate in `:gpu`.
 
-GPU memory and CUDA driver errors during processing are retried until the timeout.
-Any other processing error is raised at once in both `:gpu` and `:auto` modes.
+GPU memory errors and an unavailable device are retried until the timeout;
+any other error is raised at once in both `:gpu` and `:auto` modes.
 
 # Returns
 Tuple of `(ROIBatch, BoxesInfo)`:
@@ -290,7 +290,7 @@ function _getboxes_impl(args::GetBoxesArgs)
 
   if args.backend != :cpu && has_cuda()
       # GPU path: unified retry loop for :auto and :gpu
-      # Waits for free memory; retries TOCTOU context races and runtime GPU OOM
+      # Retries GPU memory errors and an unavailable device; raises any other error at once
       timeout = args.backend == :auto ? args.auto_timeout : args.gpu_timeout
       deadline = time() + timeout
       gpu_query_failed = false
