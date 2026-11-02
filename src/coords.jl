@@ -105,31 +105,37 @@ end
 
 """
    removeoverlap(coords, args)
- 
+
 Remove overlapping coords based on distance.
+Boxes are compared in index order, dropping the dimmer of each overlapping pair.
+Ties drop the later box.
 
 # Arguments
 - `coords`: List of coords
-- `args`: Parameters  
+- `args`: Parameters
 
 # Returns
-- `coords`: Coords with overlaps removed 
+- `coords`: Coords with overlaps removed
 """
 function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
     overlap = kwargs.overlap
     for f in eachindex(coords)
-        ncoords = size(coords[f], 1)
+        c = coords[f]
+        ncoords = size(c, 1)
         keep = trues(ncoords)
 
         for i in 1:ncoords
             if keep[i]
-                ci = coords[f][i, :]
+                xi = c[i, 1]
+                yi = c[i, 2]
+                intensity_i = c[i, 4]
                 for j in (i+1):ncoords
                     if keep[j]
-                        cj = coords[f][j, :]
-                        dist = sqrt(sum((ci[1:2] - cj[1:2]) .^ 2)) # Only compare the x and y coordinates
+                        dx = xi - c[j, 1]
+                        dy = yi - c[j, 2]
+                        dist = sqrt(dx^2 + dy^2)
                         if dist <= overlap
-                            if ci[4] < cj[4] # Use the 4th column of ci and cj for intensity comparison
+                            if intensity_i < c[j, 4]
                                 keep[i] = false
                                 break
                             else
