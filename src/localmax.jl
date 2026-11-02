@@ -20,7 +20,8 @@ starting at offset `-plo`, reproducing NNlib.maxpool's odd (symmetric) and even
         ii = i + a - 1 - plo
         jj = j + b - 1 - plo
         if 1 <= ii <= nrows && 1 <= jj <= ncols
-            @inbounds m = max(m, img[ii, jj, 1, f])
+            @inbounds v = img[ii, jj, 1, f]
+            m = ifelse(v > m, v, m)
         end
     end
     @inbounds out[i, j, 1, f] = m
@@ -109,4 +110,3 @@ function findlocalmax(imagestack::AbstractArray{<:Real}, kernelsize::Int; minval
     end
     return coords
 end
-

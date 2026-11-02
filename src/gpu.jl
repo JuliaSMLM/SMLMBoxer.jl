@@ -29,11 +29,37 @@ is_gpu_query_error(e) = e isa CUDA.NVML.NVMLError || e isa CUDA.CuError
 
 True only for GPU memory errors and an unavailable device, including context-creation
 races. GPU memory errors and an unavailable device are retried until the timeout;
-any other error is raised at once.
+any other GPU failure falls back to the CPU at once under `:auto`, or is raised at once
+under `:gpu`.
 """
 is_gpu_resource_error(e) = e isa CUDA.OutOfGPUMemoryError ||
     (e isa CUDA.CuError &&
      e.code in (CUDA.ERROR_OUT_OF_MEMORY, CUDA.ERROR_DEVICE_UNAVAILABLE))
+
+"""
+    reclaim_failed_gpu_attempt()
+
+Try to release allocations after a failed GPU attempt. A poisoned CUDA context may make
+reclaim throw; preserve the processing error and allow CPU fallback in that case.
+"""
+function reclaim_failed_gpu_attempt()
+    try
+        GC.gc(false)
+        CUDA.reclaim()
+    catch
+        # Cleanup must neither replace the original error nor prevent CPU fallback.
+    end
+    return nothing
+end
+
+"""
+    frame_fits_some_gpu(frame_bytes, totals) -> Bool
+
+Whether any visible device's total memory can hold one frame. `frame_bytes` includes
+the same safety margin used by polling; `totals` contains device capacities in bytes.
+An empty device list cannot hold a frame.
+"""
+frame_fits_some_gpu(frame_bytes, totals) = any(total -> frame_bytes <= total, totals)
 
 """
     nvml_device(i) -> CUDA.NVML.Device
@@ -260,9 +286,10 @@ when supported. If NVML cannot report memory, queries CUDA on that device and
 skips its NVML contention checks. Polls through timeout with jittered backoff.
 First GPU with sufficient free memory and low contention wins.
 
-Layer 2 (runtime try/catch): Applied by `getboxes` for :auto and :gpu modes. GPU memory
-errors and an unavailable device are retried until the timeout; any other error is raised
-at once. On timeout, :auto falls back to CPU and :gpu errors.
+Layer 2 (runtime try/catch): Applied by `getboxes` for `:auto` and `:gpu` modes. GPU memory
+errors and an unavailable device retry with smaller batches until the timeout. Any other
+GPU failure uses the CPU at once under `:auto`, or raises at once under `:gpu`. On timeout,
+`:auto` falls back to the CPU and `:gpu` errors.
 
 # Arguments
 - `backend`: :cpu, :gpu, or :auto

@@ -32,8 +32,13 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 - `gpu_timeout::Float64`: Max wait for GPU in :gpu mode (default: Inf)
 - `on_wait::Union{Function,Nothing}`: Optional callback `(elapsed, available, required) -> nothing` for GPU wait progress (default: nothing)
 
-GPU memory errors and an unavailable device are retried until the timeout;
-any other error is raised at once in both :gpu and :auto modes.
+GPU memory errors and an unavailable device are retried until `auto_timeout` under `:auto`,
+then processing falls back to the CPU; any other GPU failure uses the CPU at once.
+Under `:gpu`, resource errors are retried until `gpu_timeout`; any other error is raised
+at once.
+Resource retries halve the batch cap immediately; after a single-frame failure they
+resume device polling. A frame too large for every visible GPU errors under `:gpu` or
+uses the CPU immediately under `:auto`.
 
 # Examples
 ```julia
