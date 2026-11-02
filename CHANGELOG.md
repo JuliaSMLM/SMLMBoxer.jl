@@ -12,7 +12,10 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ### Changed
 - The CPU `getboxes` path is precompiled for direct parameters, IdealCamera and sCMOS
-  filtering, and the `BoxerConfig` calling convention, without initializing a GPU.
+  filtering, and the `BoxerConfig` calling convention, without initializing a GPU. The
+  first CPU call in a fresh process (256 x 256 x 2, after loading) took 3.0 s
+  (IdealCamera) and 6.0 s (sCMOS) in 0.3.3 and 8-12 s before this workload; it now takes
+  0.04 s and 0.4 s under KernelAbstractions 0.9, 1.0 s and 1.4-2.7 s under 0.10.
 - SMLMBoxer no longer depends on cuDNN. On the GPU, standard DoG convolution and
   local-maximum pooling now use KernelAbstractions kernels; the CPU path still uses NNlib.
   Environments loading SMLMBoxer can use current CUDA and Reactant together: cuDNN's
