@@ -25,6 +25,53 @@ failed context creation). `:auto` falls back to the CPU on these; anything else 
 is_gpu_query_error(e) = e isa CUDA.NVML.NVMLError || e isa CUDA.CuError
 
 """
+    is_gpu_resource_error(e) -> Bool
+
+True only for GPU memory errors and an unavailable device, including context-creation
+races. GPU memory errors and an unavailable device are retried until the timeout;
+any other GPU failure falls back to the CPU at once under `:auto`, or is raised at once
+under `:gpu`; an interrupt (Ctrl-C) always stops the call.
+"""
+is_gpu_resource_error(e) = e isa CUDA.OutOfGPUMemoryError ||
+    (e isa CUDA.CuError &&
+     e.code in (CUDA.ERROR_OUT_OF_MEMORY, CUDA.ERROR_DEVICE_UNAVAILABLE))
+
+"""
+    reclaim_failed_gpu_attempt()
+
+Try to release allocations after a failed GPU attempt. A poisoned CUDA context may make
+reclaim throw; preserve the processing error and allow CPU fallback in that case.
+"""
+function reclaim_failed_gpu_attempt()
+    try
+        GC.gc(false)
+        CUDA.reclaim()
+    catch
+        # Cleanup must neither replace the original error nor prevent CPU fallback.
+    end
+    return nothing
+end
+
+"""
+    GPU_CONTEXT_RESERVE
+
+Bytes reserved for a CUDA context and the driver. The lab RTX 4090 reported 878.812 MiB
+in use at `start` in dev/output/drop-cudnn/pool-diag2-branch.log; round up to 1 GiB.
+"""
+const GPU_CONTEXT_RESERVE = 1024^3
+
+"""
+    frame_fits_some_gpu(frame_bytes, totals, reserve) -> Bool
+
+Whether any visible device can free enough memory for one frame after reserving `reserve`
+bytes for its context and driver. `frame_bytes` includes the same safety margin used by
+polling; `totals` contains device capacities in bytes.
+An empty device list cannot hold a frame.
+"""
+frame_fits_some_gpu(frame_bytes, totals, reserve) =
+    any(total -> total >= reserve && frame_bytes <= total - reserve, totals)
+
+"""
     nvml_device(i) -> CUDA.NVML.Device
 
 Return the NVML device for GPU `i`, a 0-based CUDA ordinal, without creating a context.
@@ -249,8 +296,10 @@ when supported. If NVML cannot report memory, queries CUDA on that device and
 skips its NVML contention checks. Polls through timeout with jittered backoff.
 First GPU with sufficient free memory and low contention wins.
 
-Layer 2 (runtime try/catch): Applied by caller for :auto mode. If CUDA errors
-occur during processing despite NVML pre-check, falls back to CPU.
+Layer 2 (runtime try/catch): Applied by `getboxes` for `:auto` and `:gpu` modes. GPU memory
+errors and an unavailable device retry with smaller batches until the timeout. Any other
+GPU failure uses the CPU at once under `:auto`, or raises at once under `:gpu`. On timeout,
+`:auto` falls back to the CPU and `:gpu` errors.
 
 # Arguments
 - `backend`: :cpu, :gpu, or :auto

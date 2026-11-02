@@ -5,7 +5,7 @@
 [![Build Status](https://github.com/JuliaSMLM/SMLMBoxer.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/JuliaSMLM/SMLMBoxer.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/JuliaSMLM/SMLMBoxer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/JuliaSMLM/SMLMBoxer.jl)
 
-Particle detection and ROI extraction for single-molecule localization microscopy. Difference-of-Gaussians filtering with automatic GPU acceleration and sCMOS variance weighting.
+Particle detection and ROI extraction for single-molecule localization microscopy. Difference-of-Gaussians filtering with automatic acceleration on NVIDIA GPUs and sCMOS variance weighting.
 
 ## Installation
 
@@ -39,13 +39,49 @@ roi_batch.frame_indices  # source frame for each ROI
 
 For complete SMLM workflows (detection + fitting + rendering), see [SMLMAnalysis.jl](https://github.com/JuliaSMLM/SMLMAnalysis.jl).
 
+## GPU Support
+
+| Hardware | `backend = :auto` | `backend = :gpu` |
+|---|---|---|
+| NVIDIA GPU with a working CUDA.jl | GPU, CPU if it cannot run | GPU |
+| AMD or Intel GPU, or no GPU | CPU | error: `GPU backend requested but CUDA is not functional` |
+
+`Pkg.add("SMLMBoxer")` is the whole install for CPU and GPU. CUDA.jl comes with it.
+
+AMD GPUs are not supported yet. The GPU path uses CUDA.jl and needs an NVIDIA GPU;
+on a machine with an AMD GPU, `:auto` runs on the CPU. AMDGPU.jl can be installed and
+loaded beside SMLMBoxer (resolving CUDA 6.5.0 and KernelAbstractions 0.10.4), but
+SMLMBoxer does not use it. The kernels use KernelAbstractions, which an AMD backend
+would build on; no AMD backend exists in this release.
+
+SMLMBoxer does not use Reactant and needs no setup for it. Removing the cuDNN dependency
+removed the library clash with Reactant's bundled copy, so both packages load in one
+process. Tested with Reactant 0.2.304 and KernelAbstractions 0.9.45, with CUDA 6.2.2
+(what a fresh install resolves) on Julia 1.13.0 and with CUDA 5.11.3 on Julia 1.12.6
+and 1.13.0; `getboxes` with `backend = :gpu` returned the same boxes as the CPU.
+Such an environment resolves KernelAbstractions 0.9 and the CUDA version Reactant
+allows; SMLMBoxer accepts both. When Reactant first used the RTX 4090 it reserved
+17.6 GiB of the card's 24 GB for its own allocator, so `getboxes` in that process has
+less GPU memory available.
+
+```julia
+using Pkg
+Pkg.add(["SMLMBoxer", "Reactant"])
+using SMLMBoxer, Reactant
+```
+
+With CUDA.jl 6.5.0, `CUDA.reclaim()` no longer returns freed pool memory to the driver.
+After GPU `getboxes`, the process keeps its peak GPU memory reserved until it exits.
+Later calls in that process reuse it; other processes cannot use it. CUDA.jl 6.4 and
+earlier release it.
+
 GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-process environments. See the [API docs](https://JuliaSMLM.github.io/SMLMBoxer.jl/dev/api/) for details.
 
 ## Detection Modes
 
 | Mode | Camera | Filtering | Use Case |
 |------|--------|-----------|----------|
-| Standard DoG | `IdealCamera` | NNlib convolution (cuDNN on GPU) | Uniform noise, simulated data |
+| Standard DoG | `IdealCamera` | NNlib on CPU, KernelAbstractions kernel on GPU | Uniform noise, simulated data |
 | Variance-weighted DoG | `SCMOSCamera` | Inverse-variance weighting via KernelAbstractions | Spatially-varying readnoise |
 
 Variance weighting is automatic when an `SCMOSCamera` is provided — low-noise pixels get high weight, high-noise pixels get reduced influence.
@@ -111,15 +147,38 @@ first_roi = roi_batch[1]
 
 ## Performance
 
-Benchmarked on AMD Ryzen Threadripper PRO 5975WX / NVIDIA RTX A6000, 10 frames (images/s):
+Benchmarked on AMD Ryzen 9 5950X (32 threads) / NVIDIA RTX 4090, SMLMBoxer 0.3.4, CUDA.jl 6.5.0,
+KernelAbstractions 0.10.4 (images/s, whole `getboxes` call):
 
-| Image Size | Ideal CPU | Ideal GPU | sCMOS CPU | sCMOS GPU |
-|------------|----------:|----------:|----------:|----------:|
-| 128×128 | 60 | 4,564 | 23 | 4,090 |
-| 256×256 | 15 | 3,752 | 6 | 2,557 |
-| 512×512 | 4 | 1,553 | 1 | 927 |
+The CPU columns use 32 threads; start Julia with `--threads=auto` for the 32-thread
+speed. Plain `julia` runs one thread.
 
-Standard DoG uses NNlib/cuDNN; variance-weighted sCMOS uses KernelAbstractions custom kernels. Run `Pkg.test("SMLMBoxer")` locally to benchmark your hardware.
+| Image Size | Frames | Ideal CPU | Ideal GPU | sCMOS CPU | sCMOS GPU |
+|------------|-------:|----------:|----------:|----------:|----------:|
+| 128×128 | 10 | 1,671 | 166 | 328 | 162 |
+| 128×128 | 500 | 2,837 | 6,660 | 335 | 6,011 |
+| 256×256 | 10 | 725 | 157 | 87 | 164 |
+| 256×256 | 500 | 945 | 5,329 | 80 | 4,340 |
+| 512×512 | 10 | 248 | 164 | 25 | 155 |
+| 512×512 | 500 | 299 | 3,113 | 25 | 2,020 |
+
+With one CPU thread, 10 frames and the CUDA.jl 6.5.0 environment (images/s):
+
+| Image Size | Ideal CPU (1 thread) | sCMOS CPU (1 thread) |
+|------------|---------------------:|--------------------:|
+| 128×128 | 630 | 36 |
+| 256×256 | 162 | 9 |
+| 512×512 | 46 | 2 |
+
+Every GPU call has a fixed cost of about 60 ms, mostly releasing the GPU memory pool
+after the call, whatever the stack size, so GPU throughput depends on stack length.
+At 256×256 with an IdealCamera, the CPU and GPU break even at about 10 frames on one
+CPU thread and about 50 frames on 32 threads; below that use `backend = :cpu` if speed
+matters. On 500 frames, compared with 32 CPU threads, the GPU is about 2-10x faster
+with an IdealCamera and about 20-80x faster with an SCMOSCamera. 0.3.3 has the same
+fixed cost.
+
+Standard DoG uses NNlib on CPU and a KernelAbstractions kernel on GPU; variance-weighted sCMOS uses KernelAbstractions custom kernels on both. Run `GROUP=Long julia --project -e 'using Pkg; Pkg.test("SMLMBoxer")'` locally to benchmark your hardware.
 
 ## Algorithm Reference
 

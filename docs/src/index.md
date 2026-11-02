@@ -9,11 +9,11 @@ SMLMBoxer.jl is a high-performance Julia package for detecting particles and blo
 ## Features
 
 - **PSF-Aware Detection**: Automatic parameter tuning based on PSF characteristics and photon thresholds
-- **GPU Acceleration**: CUDA support via NNlib/cuDNN for fast processing of large image stacks
+- **GPU Acceleration**: NVIDIA GPUs through CUDA.jl and KernelAbstractions kernels (NNlib on CPU) for fast processing of large image stacks
 - **Variance-Weighted Filtering**: Optimal detection in sCMOS data with spatially-varying noise
 - **ROIBatch Integration**: Seamless integration with SMLMData.jl coordinate system
 - **Flexible Interface**: Both user-friendly PSF-aware and expert-level direct control modes
-- **Device-Agnostic Kernels**: KernelAbstractions.jl for automatic CPU/GPU kernel execution
+- **KernelAbstractions Kernels**: GPU filtering and pooling, and sCMOS filtering on both CPU and GPU
 
 ## Installation
 
@@ -28,6 +28,42 @@ For development version:
 using Pkg
 Pkg.add(url="https://github.com/JuliaSMLM/SMLMBoxer.jl")
 ```
+
+## GPU Support
+
+| Hardware | `backend = :auto` | `backend = :gpu` |
+|---|---|---|
+| NVIDIA GPU with a working CUDA.jl | GPU, CPU if it cannot run | GPU |
+| AMD or Intel GPU, or no GPU | CPU | error: `GPU backend requested but CUDA is not functional` |
+
+`Pkg.add("SMLMBoxer")` is the whole install for CPU and GPU. CUDA.jl comes with it.
+
+AMD GPUs are not supported yet. The GPU path uses CUDA.jl and needs an NVIDIA GPU;
+on a machine with an AMD GPU, `:auto` runs on the CPU. AMDGPU.jl can be installed and
+loaded beside SMLMBoxer (resolving CUDA 6.5.0 and KernelAbstractions 0.10.4), but
+SMLMBoxer does not use it. The kernels use KernelAbstractions, which an AMD backend
+would build on; no AMD backend exists in this release.
+
+SMLMBoxer does not use Reactant and needs no setup for it. Removing the cuDNN dependency
+removed the library clash with Reactant's bundled copy, so both packages load in one
+process. Tested with Reactant 0.2.304 and KernelAbstractions 0.9.45, with CUDA 6.2.2
+(what a fresh install resolves) on Julia 1.13.0 and with CUDA 5.11.3 on Julia 1.12.6
+and 1.13.0; `getboxes` with `backend = :gpu` returned the same boxes as the CPU.
+Such an environment resolves KernelAbstractions 0.9 and the CUDA version Reactant
+allows; SMLMBoxer accepts both. When Reactant first used the RTX 4090 it reserved
+17.6 GiB of the card's 24 GB for its own allocator, so `getboxes` in that process has
+less GPU memory available.
+
+```julia
+using Pkg
+Pkg.add(["SMLMBoxer", "Reactant"])
+using SMLMBoxer, Reactant
+```
+
+With CUDA.jl 6.5.0, `CUDA.reclaim()` no longer returns freed pool memory to the driver.
+After GPU `getboxes`, the process keeps its peak GPU memory reserved until it exits.
+Later calls in that process reuse it; other processes cannot use it. CUDA.jl 6.4 and
+earlier release it.
 
 ## Quick Start
 
@@ -87,6 +123,7 @@ The `getboxes()` function implements a multi-stage blob detection pipeline:
    - Small Gaussian (σ_small) matches the PSF to maximize SNR
    - Large Gaussian (σ_large) provides local background estimation
    - DoG = Small - Large highlights blob features
+   - Pixels near the image edge are filtered with the in-bounds part of each Gaussian, on both filtering paths
 
 2. **Variance Weighting (sCMOS)**: When an SCMOSCamera is provided, each pixel's contribution is weighted by inverse variance (1/readnoise²):
    - Low-noise pixels receive high weight (strong influence)

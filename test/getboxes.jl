@@ -50,6 +50,30 @@ using Test, SMLMBoxer, SMLMData
     @test roi_batch.camera isa IdealCamera
 end
 
+@testset "Image-sized camera and far-corner ROI" begin
+    image = zeros(Float32, 40, 50)
+    image[end, end] = 1000f0
+    # Exercise both the default camera and camera-ROI extraction during box cutting.
+    for camera in (nothing, IdealCamera(50, 40, 1f0))
+        roi_batch, _ = getboxes(image, camera;
+            boxsize = 7, minval = 1.0, backend = :cpu)
+
+        @test length(roi_batch.camera.pixel_edges_x) == 51
+        @test length(roi_batch.camera.pixel_edges_y) == 41
+        @test roi_batch.camera.pixel_edges_x == Float32.(0:50)
+        @test roi_batch.camera.pixel_edges_y == Float32.(0:40)
+        @test length(roi_batch) == 1
+        @test roi_batch.x_corners == [44]
+        @test roi_batch.y_corners == [34]
+        @test roi_batch.data[:, :, 1] == image[34:40, 44:50]
+
+        # The final ROI needs the last edge at n + 1, including after the size correction.
+        roi_camera = SMLMBoxer.extract_camera_roi(roi_batch.camera, 34:41, 44:51)
+        @test roi_camera.pixel_edges_x == Float32.(43:50)
+        @test roi_camera.pixel_edges_y == Float32.(33:40)
+    end
+end
+
 @testset "Overlap removal" begin
     # Test image with two close bright peaks
     image = zeros(Float32, 100, 100)
@@ -81,6 +105,34 @@ end
     @test info.elapsed_s > 0
 end
 
+@testset "Overlap removal applies to every frame" begin
+    # Three identical frames, two peaks 8 px apart. overlap = 10 must drop the dimmer
+    # peak in every frame, not only in frame 1; overlap = 0 keeps both everywhere.
+    image = zeros(Float32, 40, 40, 3)
+    for f in 1:3
+        image[20, 14, f] = 100
+        image[20, 22, f] = 90
+    end
+    perframe(rb) = [count(==(f), rb.frame_indices) for f in 1:3]
+
+    for (overlap, expected) in ((0.0, [2, 2, 2]), (10.0, [1, 1, 1]))
+        (roi_batch, _) = getboxes(
+            image;
+            boxsize = 7,
+            overlap = overlap,
+            sigma_small = 1.0,
+            sigma_large = 2.0,
+            minval = 1.0,
+            backend = :cpu
+        )
+        @test perframe(roi_batch) == expected
+        if overlap == 10.0
+            # The brighter peak (col 14) is the one kept in each frame
+            @test all(x -> x <= 14 < x + 7, roi_batch.x_corners)
+        end
+    end
+end
+
 @testset "New API with IdealCamera" begin
     # Test image with two bright peaks
     image = zeros(Float32, 100, 100)
@@ -90,8 +142,8 @@ end
     # Create an IdealCamera
     pixel_size = 0.1f0  # microns
     camera = IdealCamera(
-        1:101,  # pixel range x (need 101 edges for 100 pixels)
-        1:101,  # pixel range y
+        1:100,  # pixel centers x
+        1:100,  # pixel centers y
         pixel_size  # pixel size
     )
 
@@ -158,8 +210,8 @@ end
     # Create camera
     pixel_size = 0.1f0  # 100nm pixels
     camera = IdealCamera(
-        1:101,
-        1:101,
+        1:100,
+        1:100,
         pixel_size
     )
 
@@ -202,7 +254,7 @@ end
     image = zeros(Float32, 100, 100)
     image[50, 50] = 1000.0
 
-    camera = IdealCamera(1:101, 1:101, 0.1f0)
+    camera = IdealCamera(1:100, 1:100, 0.1f0)
 
     # PSF-aware config
     config_psf = BoxerConfig(

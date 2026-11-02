@@ -7,7 +7,8 @@ ROI batch with location tracking and processing metadata.
 # Arguments
 - `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
 - `camera::Union{AbstractCamera,Nothing}`: Optional camera object (IdealCamera or SCMOSCamera) from SMLMData.
-  If not provided, a default IdealCamera is created.
+  If not provided, an IdealCamera of the image's size with 1 um pixels is created
+  (coordinates in um equal pixels).
 
 ## Primary Interface (Recommended - PSF-Aware)
 - `psf_sigma::Real`: PSF sigma in microns (physical units, e.g., 0.13 for 130nm PSF).
@@ -34,7 +35,7 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 - `backend::Symbol`: Compute backend - `:cpu`, `:gpu`, or `:auto` (default: `:auto`).
   - `:cpu` - Always use CPU
   - `:gpu` - Require GPU, wait for memory if needed (waits forever by default)
-  - `:auto` - Try GPU with timeout, fall back to CPU if memory unavailable or queries fail
+  - `:auto` - Try GPU with timeout, fall back to CPU on timeout or other GPU failures
 - `auto_timeout::Real`: Max seconds to wait for GPU memory in `:auto` mode (default: 300.0).
 - `gpu_timeout::Real`: Max seconds to wait for GPU memory in `:gpu` mode (default: Inf).
 - `on_wait::Function`: Optional callback `(elapsed, available, required) -> nothing` for wait progress.
@@ -42,6 +43,14 @@ Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 GPU memory queries use NVML when supported. Otherwise CUDA is queried on each device,
 restoring the previous device and skipping NVML contention checks for that device.
 Other device query errors warn and fall back to CPU in `:auto` mode, or propagate in `:gpu`.
+
+GPU memory errors and an unavailable device are retried until `auto_timeout` under `:auto`,
+then processing falls back to the CPU; any other GPU failure uses the CPU at once.
+Under `:gpu`, resource errors are retried until `gpu_timeout`; any other error is raised
+at once; an interrupt (Ctrl-C) always stops the call.
+Resource retries halve the batch cap immediately; after a single-frame failure they
+resume device polling. A frame larger than any GPU can free errors under `:gpu` or
+uses the CPU immediately under `:auto`.
 
 # Returns
 Tuple of `(ROIBatch, BoxesInfo)`:
@@ -51,7 +60,8 @@ Tuple of `(ROIBatch, BoxesInfo)`:
 - `x_corners`: Vector of x (column) corner positions in camera coordinates
 - `y_corners`: Vector of y (row) corner positions in camera coordinates
 - `frame_indices`: Vector of frame indices for each ROI
-- `camera`: Camera object (provided or default IdealCamera)
+- `camera`: Provided camera, or an IdealCamera of the image's size with 1 um pixels
+  (coordinates in um equal pixels)
 - `roi_size`: Size of each ROI (square)
 
 `BoxesInfo` with the following fields:
@@ -96,7 +106,9 @@ This provides GPU acceleration for sCMOS cameras (10-100x speedup on large image
 ## Standard Filtering (IdealCamera or no camera)
 
 Standard DoG convolution is used when no camera is provided or with IdealCamera.
-The convolution is performed via NNlib (using cuDNN on GPU) or CPU, depending on `backend`.
+The convolution runs as a KernelAbstractions kernel on the GPU, or via NNlib on the CPU,
+depending on `backend`. At image edges, each Gaussian is normalized by its in-bounds
+weights, as in the sCMOS path. Interior pixels retain the original convolution values.
 
 After filtering, local maxima above `minval` are identified. Boxes are cut
 out around each maximum, excluding overlaps.
@@ -189,7 +201,19 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
 end
 
 """
-    _process_with_batching(imagestack, args, kernelsize, max_free_mem; use_gpu, batch_cleanup=nothing)
+    frames_per_batch(nframes, memory_per_frame, max_free_mem, max_batch_frames) -> Int
+
+Choose a batch size from available memory and the frame cap retained across GPU retries.
+Always attempt at least one frame.
+"""
+function frames_per_batch(nframes, memory_per_frame, max_free_mem, max_batch_frames)
+  memory_cap = max(1, floor(Int, max_free_mem / memory_per_frame))
+  return min(nframes, memory_cap, max_batch_frames)
+end
+
+"""
+    _process_with_batching(imagestack, args, kernelsize, max_free_mem; use_gpu,
+                           max_batch_frames=size(imagestack, 4), batch_cleanup=nothing)
 
 Process imagestack with memory-aware batching. Handles both single-batch (fits in memory)
 and multi-batch (too large) cases.
@@ -202,57 +226,46 @@ Returns `(coords, batch_size, n_batches, memory_per_batch)`.
 - `kernelsize`: Kernel size for local max detection
 - `max_free_mem`: Available memory in bytes
 - `use_gpu`: Whether to use GPU for processing
+- `max_batch_frames`: Optional cap on frames per batch, retained across GPU retries
 - `batch_cleanup`: Optional function called after each batch (e.g., for GC)
 """
 function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
-                                 use_gpu::Bool, batch_cleanup::Union{Function,Nothing}=nothing)
-    # Memory multiplier: 6x for standard DoG, 8x for variance-weighted sCMOS
-    # (sCMOS uses in-place DoG subtraction, saving one full-size copy)
-    n_copies = args.camera isa SCMOSCamera ? 8 : 6
-    memory_required = sizeof(imagestack) * n_copies
+    use_gpu::Bool, max_batch_frames::Int=size(imagestack, 4),
+    batch_cleanup::Union{Function,Nothing}=nothing)
+  n_images = size(imagestack, 4)
+  memory_per_frame = estimate_gpu_memory_per_frame(
+    size(imagestack, 1), size(imagestack, 2), args.camera)
+  batch_size = frames_per_batch(n_images, memory_per_frame, max_free_mem, max_batch_frames)
+  n_batches = cld(n_images, batch_size)
+  memory_per_batch = batch_size * memory_per_frame
 
-    if memory_required <= max_free_mem
-        # Single batch: process whole stack
-        filtered_stack = dog_filter(imagestack, args; use_gpu)
-        coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu=use_gpu)
-        batch_size = size(imagestack, 4)
-        n_batches = 1
-        memory_per_batch = memory_required
-    else
-        # Multi-batch: split into smaller chunks
-        memory_per_frame = size(imagestack, 1) * size(imagestack, 2) * sizeof(eltype(imagestack)) * n_copies
-        batch_size = max(1, Int(floor(max_free_mem / memory_per_frame)))
-        n_images = size(imagestack, 4)
-        n_batches = Int(ceil(n_images / batch_size))
-        memory_per_batch = batch_size * memory_per_frame
+  if n_batches == 1
+    filtered_stack = dog_filter(imagestack, args; use_gpu)
+    coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu)
+  else
+    coords = Vector{Matrix{Float32}}(undef, 0)
+    for i in 1:n_batches
+      start_idx = (i - 1) * batch_size + 1
+      end_idx = min(i * batch_size, n_images)
+      batch = imagestack[:, :, :, start_idx:end_idx]
+      filtered_batch = dog_filter(batch, args; use_gpu)
+      coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu)
 
-        coords = Vector{Matrix{Float32}}(undef, 0)
+      # Offset frame indices to actual frame numbers.
+      frame_offset = start_idx - 1
+      for coord_matrix in coords_batch
+        coord_matrix[:, 3] .+= frame_offset
+      end
+      append!(coords, coords_batch)
 
-        for i in 1:n_batches
-            start_idx = (i - 1) * batch_size + 1
-            end_idx = min(i * batch_size, n_images)
-            batch = imagestack[:, :, :, start_idx:end_idx]
-            filtered_batch = dog_filter(batch, args; use_gpu)
-            coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu=use_gpu)
-
-            # Offset frame indices to actual frame numbers
-            frame_offset = start_idx - 1
-            for coord_matrix in coords_batch
-                coord_matrix[:, 3] .+= frame_offset
-            end
-
-            append!(coords, coords_batch)
-
-            # Optional cleanup between batches (e.g., GC for CPU path)
-            if batch_cleanup !== nothing
-                filtered_batch = nothing
-                batch = nothing
-                batch_cleanup()
-            end
-        end
+      if batch_cleanup !== nothing
+        filtered_batch = nothing
+        batch = nothing
+        batch_cleanup()
+      end
     end
-
-    return coords, batch_size, n_batches, memory_per_batch
+  end
+  return coords, batch_size, n_batches, memory_per_batch
 end
 
 """
@@ -282,54 +295,94 @@ function _getboxes_impl(args::GetBoxesArgs)
   gpu_succeeded = false
 
   if args.backend != :cpu && has_cuda()
-      # GPU path: unified retry loop for :auto and :gpu
-      # Handles all failure modes: no free memory, TOCTOU context race, runtime OOM
-      timeout = args.backend == :auto ? args.auto_timeout : args.gpu_timeout
-      deadline = time() + timeout
-      gpu_query_failed = false
+    timeout = args.backend == :auto ? args.auto_timeout : args.gpu_timeout
+    deadline = time() + timeout
+    gpu_fallback = false
+    batch_cap = size(imagestack, 4)
+    failed_batch_size = 1
+    poll_device = true
+    dev_id = -1
 
-      while !gpu_succeeded && time() < deadline
-          remaining = max(0.0, deadline - time())
+    totals = try
+      map(CUDA.totalmem, CUDA.devices())
+    catch e
+      (args.backend == :gpu || !is_gpu_query_error(e)) && rethrow()
+      @warn "GPU device query failed, using CPU" exception=(e, catch_backtrace())
+      gpu_fallback = true
+      Int[]
+    end
+    frame_need = ceil(Int, 1.5 * min_memory_needed)
+    if !gpu_fallback && !frame_fits_some_gpu(frame_need, totals, GPU_CONTEXT_RESERVE)
+      largest = isempty(totals) ? 0 : maximum(totals)
+      largest_free = largest >= GPU_CONTEXT_RESERVE ? largest - GPU_CONTEXT_RESERVE : 0
+      message = "No visible GPU can free enough memory for one frame: need " *
+        "$(Base.format_bytes(frame_need)) including the safety margin; " *
+        "largest device can free $(Base.format_bytes(largest_free)) " *
+        "(after a $(Base.format_bytes(GPU_CONTEXT_RESERVE)) context/driver reserve)"
+      args.backend == :gpu && error(message)
+      @warn "$message; using the CPU"
+      gpu_fallback = true
+    end
 
-          # Poll for an available GPU, preferring NVML
-          available, dev_id = try
-              poll_gpu_nvml(min_memory_needed;
-                  timeout=remaining, on_wait=args.on_wait)
-          catch e
-              (args.backend == :gpu || !is_gpu_query_error(e)) && rethrow()
-              @warn "GPU device query failed, using CPU" exception=(e, catch_backtrace())
-              gpu_query_failed = true
-              break
-          end
-          !available && break
-
-          try
-              CUDA.device!(dev_id)
-              max_free_mem = CUDA.free_memory()
-              coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
-                  imagestack, args, kernelsize, max_free_mem; use_gpu=true)
-              CUDA.synchronize()
-              GC.gc(false)
-              CUDA.reclaim()
-              device_id = dev_id
-              actual_backend = :gpu
-              gpu_succeeded = true
-          catch e
-              @warn "GPU failed, releasing memory and retrying" exception=e
-              GC.gc(false)
-              CUDA.reclaim()
-              # loop back to poll_gpu_nvml
-          end
+    while !gpu_succeeded && !gpu_fallback && time() < deadline
+      if poll_device
+        remaining = max(0.0, deadline - time())
+        available, dev_id = try
+          poll_gpu_nvml(min_memory_needed; timeout=remaining, on_wait=args.on_wait)
+        catch e
+          (args.backend == :gpu || !is_gpu_query_error(e)) && rethrow()
+          @warn "GPU device query failed, using CPU" exception=(e, catch_backtrace())
+          gpu_fallback = true
+          break
+        end
+        !available && break
       end
 
-      if !gpu_succeeded
-          if args.backend == :gpu
-              error("GPU processing failed after $(timeout)s. " *
-                    "Required: $(Base.format_bytes(min_memory_needed))")
-          elseif !gpu_query_failed
-              @warn "GPU unavailable after $(timeout)s, using CPU"
-          end
+      attempt_batch_size = 1
+      try
+        CUDA.device!(dev_id)
+        max_free_mem = CUDA.free_memory()
+        attempt_batch_size = frames_per_batch(size(imagestack, 4), min_memory_needed,
+          max_free_mem, batch_cap)
+        coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
+          imagestack, args, kernelsize, max_free_mem;
+          use_gpu=true, max_batch_frames=batch_cap)
+        CUDA.synchronize()
+        GC.gc(false)
+        CUDA.reclaim()
+        device_id = dev_id
+        actual_backend = :gpu
+        gpu_succeeded = true
+      catch e
+        reclaim_failed_gpu_attempt()
+        e isa InterruptException && rethrow()
+        if !is_gpu_resource_error(e)
+          args.backend == :gpu && rethrow()
+          @warn "GPU processing failed; using the CPU" exception=(e, catch_backtrace())
+          gpu_fallback = true
+          break
+        end
+        failed_batch_size = attempt_batch_size
+        @warn "GPU failed, releasing memory and retrying" exception=e
+        if attempt_batch_size > 1
+          batch_cap = max(1, attempt_batch_size ÷ 2)
+          poll_device = false
+        else
+          poll_device = true
+        end
       end
+    end
+
+    if !gpu_succeeded
+      if args.backend == :gpu
+        failed_memory = failed_batch_size * min_memory_needed
+        error("GPU processing failed after $(timeout)s. " *
+          "Failed batch: $failed_batch_size frame(s), " *
+          "requiring $(Base.format_bytes(failed_memory))")
+      elseif !gpu_fallback
+        @warn "GPU unavailable after $(timeout)s, using CPU"
+      end
+    end
   elseif args.backend == :gpu
       error("GPU backend requested but CUDA is not functional")
   end
@@ -362,16 +415,16 @@ function _getboxes_impl(args::GetBoxesArgs)
     frame_indices[i] = Int32(boxcoords[i, 3])
   end
 
-  # Use provided camera or create default IdealCamera if none provided
+  # Use provided camera or create an image-sized IdealCamera with 1 um pixels
   camera = if args.camera !== nothing
     args.camera
   else
-    # Create minimal IdealCamera with pixel edges matching image size
+    # The three-argument constructor takes pixel centers
     img_rows, img_cols = size(imagestack, 1), size(imagestack, 2)
     IdealCamera(
-      1:(img_cols+1),  # pixel_edges_x
-      1:(img_rows+1),  # pixel_edges_y
-      1.0f0            # pixel size (arbitrary for default)
+      1:img_cols,  # pixel centers x
+      1:img_rows,  # pixel centers y
+      1.0f0        # pixel size (um)
     )
   end
 
@@ -381,7 +434,4 @@ function _getboxes_impl(args::GetBoxesArgs)
 
   return (roi_batch, info)
 end
-
-
-
 

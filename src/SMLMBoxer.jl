@@ -17,8 +17,8 @@ module SMLMBoxer
 
 using NNlib: NNlib
 using CUDA: CUDA, CUDABackend, CuArray
-using cuDNN: cuDNN  # Required for NNlib's cuDNN backend
-using KernelAbstractions: KernelAbstractions, @index, @kernel, @ndrange, CPU
+using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel, @ndrange, CPU
+using PrecompileTools: @compile_workload, @setup_workload
 using Statistics: mean  # For mean gain/QE in threshold calculation
 
 # Re-export ROIBatch and SingleROI from SMLMData for convenience
@@ -34,5 +34,6 @@ include("coords.jl")
 include("boxes.jl")
 include("interface.jl")
 include("api.jl")
+include("precompile.jl")
 
 end
