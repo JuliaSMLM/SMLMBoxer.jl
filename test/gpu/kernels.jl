@@ -16,7 +16,8 @@ using Test, SMLMBoxer, CUDA, Random, NNlib, KernelAbstractions
     asymmetric = rand(MersenneTwister(17), Float32, 5, 5)
     asymmetric_cpu = SMLMBoxer.convolve(x, asymmetric; use_gpu = false)
     asymmetric_gpu = Array(SMLMBoxer.convolve(x, asymmetric; use_gpu = true))
-    @test isapprox(asymmetric_cpu, asymmetric_gpu; atol = 1f-4)
+    # Elementwise (values near 5; a missing flip differs by order 1)
+    @test maximum(abs.(asymmetric_cpu .- asymmetric_gpu)) < 1.0f-4
 
     # Max pooling: KA kernel (GPU) vs NNlib (CPU), odd (5) and even (4) windows,
     # on the same CPU-filtered input.
