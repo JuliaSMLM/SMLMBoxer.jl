@@ -16,6 +16,8 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   first CPU call in a fresh process (256 x 256 x 2, after loading) took 3.0 s
   (IdealCamera) and 6.0 s (sCMOS) in 0.3.3 and 8-12 s before this workload; it now takes
   0.04 s and 0.4 s under KernelAbstractions 0.9, 1.0 s and 1.4-2.7 s under 0.10.
+  Precompiling SMLMBoxer takes longer in exchange, about 13.5 s (0.9) and 16.3 s (0.10)
+  instead of about 4.5 s, once per install.
 - SMLMBoxer no longer depends on cuDNN. On the GPU, standard DoG convolution and
   local-maximum pooling now use KernelAbstractions kernels; the CPU path still uses NNlib.
   Environments loading SMLMBoxer can use current CUDA and Reactant together: cuDNN's
@@ -54,7 +56,8 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   at once. Under `backend=:gpu`, resource errors retry until `gpu_timeout`, and other
   errors raise at once with their original backtrace. Cleanup errors after a sticky CUDA
   fault cannot mask the processing error or block CPU fallback. User errors such as a
-  readnoise map with the wrong size raise from the CPU fallback without retrying (#20).
+  readnoise map with the wrong size raise from the CPU fallback without retrying, and an
+  interrupt (Ctrl-C) stops the call under either backend (#20).
 - Even local-maximum windows, such as boxsize 7 with overlap 3, no longer warn that
   cuDNN does not support asymmetric padding. The GPU window now matches the CPU's
   asymmetric padding exactly.
