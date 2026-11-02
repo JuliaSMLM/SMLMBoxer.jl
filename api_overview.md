@@ -35,16 +35,24 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 - GPU-accelerated via KernelAbstractions.jl (device-agnostic kernels)
 
 ### GPU Acceleration and Scheduling
-- Standard DoG: NNlib on CPU, KernelAbstractions kernel on GPU (10-100x speedup)
+- Standard DoG: NNlib on CPU, KernelAbstractions kernel on GPU. On 500 frames, compared
+  with 32 CPU threads, the GPU is about 2-10x faster with an IdealCamera and about
+  20-80x faster with an SCMOSCamera, measured on AMD Ryzen 9 5950X / NVIDIA RTX 4090
+  with SMLMBoxer 0.3.4, CUDA.jl 6.5.0 and KernelAbstractions 0.10.4
 - Variance-weighted: KernelAbstractions custom kernels (same code for CPU/GPU)
-- Multi-GPU support: NVML-based polling selects GPU with most free memory across all devices
+- Multi-GPU support: polling selects the eligible GPU with the most free memory
+
+GPU support is NVIDIA only through CUDA.jl. AMD or Intel GPUs, or no GPU, use
+the CPU under `:auto` and raise `GPU backend requested but CUDA is not functional`
+under `:gpu`. Reactant loads beside SMLMBoxer after removal of the conflicting cuDNN
+dependency; SMLMBoxer does not use Reactant or need setup for it.
 
 **Unified GPU retry loop** handles multi-process contention:
 1. Check that one frame, including the 1.5x safety margin, fits at least one visible GPU's
    total memory. If none can hold it, `:gpu` errors and `:auto` warns and uses the CPU
    at once
-2. Poll all GPUs via NVML (no CUDA context creation) for sufficient free memory and
-   low utilization
+2. Poll all GPUs via NVML without creating CUDA contexts for sufficient free memory
+   and low utilization. When NVML cannot report a GPU's memory, ask CUDA for it
 3. Acquire GPU context and run processing
 4. On GPU memory errors or an unavailable device (including context-creation races):
    try to release memory via `GC.gc() + CUDA.reclaim()`. Halve the failed batch's frame
@@ -330,7 +338,7 @@ These functions are documented but not part of the public API. Use at your own r
 **Filtering:**
 - `dog_filter(imagestack, args)` - Apply DoG filter (routes to standard or variance-weighted)
 - `dog_filter_variance_weighted(imagestack, σ_small, σ_large, args)` - Variance-weighted DoG
-- `convolve(imagestack, kernel; use_gpu)` - Standard convolution via NNlib
+- `convolve(imagestack, kernel; use_gpu)` - NNlib on CPU, KernelAbstractions on GPU
 - `convolve_variance_weighted(imagestack, variance_map, σ, use_gpu)` - Variance-weighted via KA
 - `gaussian_2d(sigma, kernelsize)` - Create 2D Gaussian kernel
 - `dog_kernel(sigma_small, sigma_large)` - Create DoG kernel
@@ -375,7 +383,7 @@ sigma_small = 1.0 × psf_sigma_pixels  # Match PSF
 sigma_large = 2.0 × psf_sigma_pixels  # Background suppression
 
 # Photon threshold → DoG intensity threshold
-σ_eff = √(psf_sigma² + sigma_small²)  # Effective sigma after filtering
+σ_eff = √(psf_sigma_pixels² + sigma_small²)  # Effective sigma after filtering
 peak_filtered = min_photons / (2π × σ_eff²)
 minval = 0.65 × peak_filtered × effective_gain
 # effective_gain: 1 for IdealCamera (photons); QE / gain for SCMOSCamera (ADU)
@@ -396,7 +404,9 @@ Implements optimal inverse variance weighting for spatially-varying noise.
 
 - **GPU Memory Management**: Automatically batches frames if image stack exceeds GPU memory
 - **Type Stability**: All inputs converted to Float32 at entry point
-- **Multi-GPU NVML Polling**: Scans all GPUs via NVML without creating CUDA contexts. Checks free memory, process contention, and compute utilization. First GPU with sufficient memory and low contention wins.
+- **Multi-GPU NVML Polling**: Checks free memory, process contention, and compute
+  utilization via NVML without creating CUDA contexts. When NVML cannot report a GPU's
+  memory, SMLMBoxer asks CUDA for it. The eligible GPU with the most free memory wins.
 - **Contention-Safe Retry**: GPU memory errors and an unavailable device are retried until
   the timeout. Any other GPU failure uses the CPU at once under `:auto`, or raises the
   original error at once under `:gpu`. Each failed attempt tries to release memory;
@@ -406,4 +416,11 @@ Implements optimal inverse variance weighting for spatially-varying noise.
   until the process exits, unavailable to other processes; see the changelog's known issue.
 - **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting
-- **Typical Speedup**: 10-100x with GPU depending on image size and number of frames
+- **Typical Speedup**: On 500 frames, compared with 32 CPU threads, the GPU is about
+  2-10x faster with an IdealCamera and about 20-80x faster with an SCMOSCamera, measured
+  on AMD Ryzen 9 5950X / NVIDIA RTX 4090 with SMLMBoxer 0.3.4, CUDA.jl 6.5.0 and
+  KernelAbstractions 0.10.4. The fixed cost per GPU call was about 60 ms on an RTX 4090,
+  mostly releasing the GPU memory pool after the call, whatever the stack size, so GPU
+  throughput depends on stack length. At 256×256 with an IdealCamera, the CPU and GPU
+  break even at about 10 frames on one CPU thread and about 50 frames on 32 threads;
+  below that use `backend = :cpu` if speed matters. 0.3.3 has the same fixed cost.
