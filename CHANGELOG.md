@@ -8,7 +8,7 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
-## [0.4.0]
+## [0.4.0] - 2026-11-02
 
 ### Breaking
 - `min_photons` now uses the actual DoG filter response to a pixel-integrated Gaussian,
