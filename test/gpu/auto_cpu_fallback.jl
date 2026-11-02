@@ -6,7 +6,7 @@ using Test, SMLMBoxer, SMLMData, CUDA
     image = rand(Float32, 128, 128, 10)
     kw = (sigma_small=1.5, sigma_large=3.0, minval=0.1)
     cameras = (
-        IdealCamera(1:129, 1:129, 0.1f0),
+        IdealCamera(1:128, 1:128, 0.1f0),
         SCMOSCamera(128, 128, 0.1f0, 5.0f0, offset=100.0f0, gain=2.0f0, qe=0.9f0),
     )
     for camera in cameras

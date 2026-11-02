@@ -39,8 +39,8 @@ imagestack → reshape → DoG filter → local maxima → overlap removal → b
 | `SMLMBoxer.jl` | Module definition, imports, exports |
 | `types.jl` | `BoxerConfig`, `BoxesInfo`, `GetBoxesArgs` (internal); PSF-to-pixel conversion logic |
 | `interface.jl` | `getboxes()` public API (2 calling conventions); batching logic; GPU retry loop |
-| `filter.jl` | DoG filtering — standard path via NNlib/cuDNN, variance-weighted path via KernelAbstractions |
-| `localmax.jl` | Local maxima via NNlib max pooling; sparse GPU coordinate extraction |
+| `filter.jl` | DoG filtering — standard path via NNlib (CPU) / KernelAbstractions kernel (GPU), variance-weighted path via KernelAbstractions |
+| `localmax.jl` | Local maxima: NNlib max pooling (CPU), KernelAbstractions kernel (GPU); sparse GPU coordinate extraction |
 | `coords.jl` | Coordinate extraction (`maxima2coords`, `_gpu_maxima2coords`); `removeoverlap()` |
 | `boxes.jl` | ROI patch cutting (`getboxstack`, `fillbox!`); handles image boundary cases |
 | `gpu.jl` | NVML polling (context-free), CUDA memory waiting, backend selection, memory estimation |
@@ -50,7 +50,7 @@ imagestack → reshape → DoG filter → local maxima → overlap removal → b
 
 The DoG filter routes based on camera type:
 
-- **Standard DoG** (IdealCamera or no camera): NNlib convolution, cuDNN on GPU. Fast, simple.
+- **Standard DoG** (IdealCamera or no camera): NNlib convolution on CPU, KernelAbstractions kernel on GPU. Fast, simple.
 - **Variance-weighted DoG** (SCMOSCamera): KernelAbstractions custom kernels. Per-pixel inverse-variance weighting. Same code runs on CPU and GPU via KA backend dispatch.
 
 ### GPU Contention Handling

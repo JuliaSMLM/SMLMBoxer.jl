@@ -1,30 +1,31 @@
 name = "SMLMBoxer"
 uuid = "a7d3b33b-b840-4f8e-b556-99be03134090"
-version = "0.3.4-DEV"
+version = "0.3.4"
 authors = ["klidke@unm.edu"]
 
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 NNlib = "872c559c-99b0-510c-b3b7-b6c96a88d5cd"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 SMLMData = "5488f106-40b8-4660-84c5-84a168990d1b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
-cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 
 [compat]
 Aqua = "0.8"
 CUDA = "5.9, 6"
 Documenter = "1"
 ExplicitImports = "1"
-KernelAbstractions = "0.9.38"
+KernelAbstractions = "0.9.38 - 0.10"
 NNlib = "0.9.25"
 Pkg = "1"
+PrecompileTools = "1"
 Printf = "1"
+Random = "1"
 SMLMData = "0.7"
 Statistics = "1"
 TOML = "1"
 Test = "1"
-cuDNN = "1.4.6, 6"
 julia = "1.10"
 
 [extras]
@@ -33,8 +34,9 @@ Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "Documenter", "ExplicitImports", "Pkg", "Printf", "TOML", "Test"]
+test = ["Aqua", "Documenter", "ExplicitImports", "Pkg", "Printf", "Random", "TOML", "Test"]

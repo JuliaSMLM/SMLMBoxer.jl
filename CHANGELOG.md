@@ -8,6 +8,77 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-02
+
+### Changed
+- The CPU `getboxes` path is precompiled for direct parameters, IdealCamera and sCMOS
+  filtering, and the `BoxerConfig` calling convention, without initializing a GPU. The
+  first CPU call in a fresh process (256 x 256 x 2, after loading) took 3.0 s
+  (IdealCamera) and 6.0 s (sCMOS) in 0.3.3 and 8-12 s before this workload; it now takes
+  0.04 s and 0.4 s under KernelAbstractions 0.9, 1.0 s and 1.4-2.7 s under 0.10.
+  Precompiling SMLMBoxer takes longer in exchange, about 13.5 s (0.9) and 16.3 s (0.10)
+  instead of about 4.5 s, once per install.
+- SMLMBoxer no longer depends on cuDNN. On the GPU, standard DoG convolution and
+  local-maximum pooling now use KernelAbstractions kernels; the CPU path still uses NNlib.
+  Environments loading SMLMBoxer can use current CUDA and Reactant together: cuDNN's
+  CUDNN_jll no longer conflicts with Reactant's bundled cuDNN in one process. Reactant
+  0.2.304 and CUDA 5.11.3 now resolve and run next to SMLMBoxer on Julia 1.12 and 1.13.
+  The sCMOS path finds the same boxes as 0.3.3 (with #19's fix below) on CPU and GPU;
+  on the RTX 4090 a `getboxes` call at the default `min_photons` takes within 5% of
+  0.3.3's time per frame, and less under KernelAbstractions 0.10 (#20).
+- KernelAbstractions compat is `0.9.38 - 0.10`: Reactant environments resolve 0.9, while
+  current CUDA and AMDGPU environments resolve 0.10. GPU runs stay NVIDIA only; AMDGPU
+  can sit in the same environment, but SMLMBoxer does not use it. Under 0.10 the CPU
+  backend is OpenCL (POCL): the sCMOS filter on the CPU then rounds slightly differently
+  (up to 4 boxes per 100,000 change at a low threshold) and runs about 25% slower than
+  under 0.9.
+
+### Fixed
+- A repeatable GPU out-of-memory error retried the same batch until the timeout, forever
+  by default under `backend=:gpu`. Resource retries now halve the batch cap immediately;
+  only a single-frame failure resumes device polling. A frame too large for every visible
+  GPU fails at once under `:gpu`, or warns and uses the CPU under `:auto`. Timeout errors
+  report the failed batch's frame count and estimated memory need.
+- With an IdealCamera or no camera, the DoG filter treated the outside of the image as
+  zero, so a background produced false boxes along the image edges. Edge pixels are now
+  filtered with the in-bounds part of each Gaussian, as the sCMOS path already did;
+  pixels whose whole filter window lies inside the image are filtered exactly as before.
+  Boxes change only within a few pixels of the edges: on 2000 frames of lab sCMOS data
+  converted to photons, the share of boxes clamped at an edge falls from 22% to 11% at
+  the default `min_photons` (the sCMOS path gives 11% on the same frames), and on
+  simulated frames with a 10 photon/px background from 72% to 15% at `min_photons = 50`.
+- Without a camera, the ROIBatch's default IdealCamera was one pixel larger than the
+  image on each axis. Box positions were and are unchanged.
+- Overlap removal now applies to every frame of a stack; previously it applied only to
+  frame 1 (#19). Overlap removal no longer allocates per pair of boxes (a 600-box frame
+  takes 0.25 ms instead of 19 ms), so the fix costs nothing measurable at the default
+  `min_photons`; with 500-700 boxes per frame it adds 0.2-0.35 ms per frame.
+- `getboxes` retries GPU memory errors and an unavailable device until `auto_timeout`
+  under `backend=:auto`, then uses the CPU; any other GPU failure warns and uses the CPU
+  at once. Under `backend=:gpu`, resource errors retry until `gpu_timeout`, and other
+  errors raise at once with their original backtrace. Cleanup errors after a sticky CUDA
+  fault cannot mask the processing error or block CPU fallback. User errors such as a
+  readnoise map with the wrong size raise from the CPU fallback without retrying, and an
+  interrupt (Ctrl-C) stops the call under either backend (#20).
+- Even local-maximum windows, such as boxsize 7 with overlap 3, no longer warn that
+  cuDNN does not support asymmetric padding. The GPU window now matches the CPU's
+  asymmetric padding exactly.
+- Documentation: the README and docs now state which hardware runs on the GPU, how
+  SMLMBoxer sits beside Reactant, and the CUDA.jl 6.5.0 memory behavior. The README speed
+  table is re-measured on the RTX 4090 because its GPU figures were reachable only on
+  long stacks and its IdealCamera CPU figures were far too low; it now gives the fixed
+  per-call GPU cost.
+
+### Known issues
+- With CUDA.jl 6.5.0, which current KernelAbstractions 0.10 environments resolve,
+  `CUDA.reclaim()` no longer returns freed memory-pool memory to the driver, so after a
+  GPU `getboxes` call the process keeps its peak GPU memory reserved until it exits
+  (reused by later calls in the same process, unavailable to other processes). CUDA.jl
+  6.4 and earlier release it.
+- The standard GPU convolution rounds differently from cuDNN: on 2000 lab frames at
+  `min_photons = 50`, 2 of 1.13 million boxes away from the edges moved by one pixel
+  (near-tied maxima); none at the default `min_photons`.
+
 ## [0.3.3] - 2026-10-27
 
 ### Fixed

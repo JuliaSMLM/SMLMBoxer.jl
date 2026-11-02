@@ -4,18 +4,17 @@ Examples demonstrating particle detection workflows from simulation to validatio
 
 ## Setup
 
-The examples use their own independent environment with development versions of JuliaSMLM packages.
+The examples use their own independent environment. From a fresh clone, develop the
+parent SMLMBoxer checkout and instantiate the remaining dependencies from the registry:
 
 ```bash
 cd examples/
-julia --project=.
+julia --project=. -e 'using Pkg; Pkg.develop(path=".."); Pkg.instantiate()'
 ```
 
-Dependencies are already configured to use local dev versions:
-- SMLMBoxer (parent directory)
-- SMLMData (../../SMLMData)
-- SMLMSim (../../SMLMSim)
-- MicroscopePSFs (../../MicroscopePSFs)
+To use local development versions of other JuliaSMLM packages, add them explicitly
+with `Pkg.develop(path="/path/to/package")` in this environment. The generated
+`Manifest.toml` is local to your checkout.
 
 ## Examples Overview
 
