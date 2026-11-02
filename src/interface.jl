@@ -161,6 +161,9 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
         "Image size $image_size does not match camera size $camera_size (rows, columns)"))
   end
 
+  # Box extraction needs a host copy anyway; keep caller-owned GPU storage untouched
+  # and avoid allocating GPU conversion/reshape aliases outside batch cleanup.
+  imagestack = imagestack isa CuArray ? Array(imagestack) : imagestack
   # Convert to Float32 for type stability throughout pipeline
   imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
 
@@ -253,30 +256,37 @@ function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
   n_batches = cld(n_images, batch_size)
   memory_per_batch = batch_size * memory_per_frame
 
-  if n_batches == 1
-    filtered_stack = dog_filter(imagestack, args; use_gpu)
-    coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu)
-  else
-    coords = Vector{Matrix{Float32}}(undef, 0)
-    for i in 1:n_batches
-      start_idx = (i - 1) * batch_size + 1
-      end_idx = min(i * batch_size, n_images)
-      batch = imagestack[:, :, :, start_idx:end_idx]
+  coords = Vector{Matrix{Float32}}(undef, 0)
+  for i in 1:n_batches
+    start_idx = (i - 1) * batch_size + 1
+    end_idx = min(i * batch_size, n_images)
+    batch = filtered_batch = nothing
+    local coords_batch
+    completed = false
+    try
+      batch = n_batches == 1 ? imagestack : imagestack[:, :, :, start_idx:end_idx]
       filtered_batch = dog_filter(batch, args; use_gpu)
       coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu)
+      completed = true
+    finally
+      free_gpu_arrays(filtered_batch, n_batches == 1 ? nothing : batch;
+        failed=!completed)
+    end
 
+    if n_batches == 1
+      coords = coords_batch
+    else
       # Offset frame indices to actual frame numbers.
       frame_offset = start_idx - 1
       for coord_matrix in coords_batch
         coord_matrix[:, 3] .+= frame_offset
       end
       append!(coords, coords_batch)
-
-      if batch_cleanup !== nothing
-        filtered_batch = nothing
-        batch = nothing
-        batch_cleanup()
-      end
+    end
+    if n_batches > 1 && batch_cleanup !== nothing
+      filtered_batch = nothing
+      batch = nothing
+      batch_cleanup()
     end
   end
   return coords, batch_size, n_batches, memory_per_batch
@@ -361,9 +371,7 @@ function _getboxes_impl(args::GetBoxesArgs)
         coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
           imagestack, args, kernelsize, max_free_mem;
           use_gpu=true, max_batch_frames=batch_cap)
-        CUDA.synchronize()
-        GC.gc(false)
-        CUDA.reclaim()
+        release_gpu_memory()
         device_id = dev_id
         actual_backend = :gpu
         gpu_succeeded = true
