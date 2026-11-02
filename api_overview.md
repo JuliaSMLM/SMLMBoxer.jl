@@ -29,7 +29,8 @@ Specify physical PSF parameters (in microns), automatically converted to optimal
 
 ### Variance-Weighted Filtering (sCMOS)
 When `SCMOSCamera` is provided, implements SMITE-style inverse variance weighting:
-- Each pixel weighted by `gaussian_kernel / variance` where variance = readnoise²
+- Each pixel weighted by `gaussian_kernel / variance`, with
+  `variance = (readnoise / gain)^2` in ADU² (gain in e⁻/ADU)
 - Low-noise pixels: high weight (strong detection influence)
 - High-noise pixels: low weight (reduced false positives)
 - GPU-accelerated via KernelAbstractions.jl (device-agnostic kernels)
@@ -139,6 +140,10 @@ getboxes(imagestack, camera=nothing; kwargs...) -> (ROIBatch, BoxesInfo)
 Both conventions are equivalent - kwargs are forwarded to a BoxerConfig internally.
 
 Main detection function. Applies DoG filtering, finds local maxima, extracts ROI patches.
+Image (rows, columns) must match the camera pixel edges, or `DimensionMismatch` is raised.
+Crop the camera together with the image. Odd and even box sizes share the corner rule
+`clamp(center - (boxsize - 1) ÷ 2, 1, image_size - boxsize + 1)` on each axis.
+After clamping, keep the brightest filtered detection per corner and frame.
 
 **Arguments:**
 - `imagestack::AbstractArray{<:Real}` - Input image stack (2D or 3D)
@@ -149,7 +154,9 @@ Main detection function. Applies DoG filtering, finds local maxima, extracts ROI
 
 *PSF-Aware Interface (Recommended):*
 - `psf_sigma::Real` - PSF sigma in microns (requires camera for pixel size conversion)
-- `min_photons::Real` - Minimum total photons for detection (default: 500.0)
+- `min_photons::Real` - Photon threshold (default: 500.0). A noise-free,
+  pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
+  count; at a pixel corner it needs about 1.1× more photons.
 
 *Advanced Interface (Direct Control):*
 - `sigma_small::Real` - Small Gaussian sigma in pixels (default: 1.0)
@@ -157,11 +164,11 @@ Main detection function. Applies DoG filtering, finds local maxima, extracts ROI
 - `minval::Real` - DoG intensity threshold (default: 0.0)
 
 *Other Parameters:*
-- `boxsize::Int` - ROI size in pixels (default: 7)
+- `boxsize::Int` - ROI size in pixels, odd or even, at least 1 (default: 7)
 - `overlap::Real` - pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
   pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
-  not a bound on box overlap: with the defaults, neighbouring boxes can share 4 rows or
+  not a bound on box overlap: with the defaults, neighboring boxes can share 4 rows or
   columns.
 - `backend::Symbol` - Compute backend: `:cpu`, `:gpu`, or `:auto` (default: `:auto`)
   - `:cpu` - Always use CPU
@@ -226,6 +233,7 @@ for chunk_start in 1:max_frames:total_frames
     chunk_end = min(chunk_start + max_frames - 1, total_frames)
     imagestack = load_frames(chunk_start:chunk_end)
     (roi_batch, info) = getboxes(imagestack, camera; psf_sigma=0.13)
+    roi_batch.frame_indices .+= chunk_start - 1
     # ... process results
 end
 ```
@@ -368,8 +376,10 @@ These functions are documented but not part of the public API. Use at your own r
 ### Detection Pipeline
 1. **Filtering**: Apply DoG filter (standard or variance-weighted based on camera type)
 2. **Local Maxima**: Find peaks above threshold using max pooling
-3. **Overlap Removal**: Eliminate overlapping detections (keep higher intensity)
-4. **Box Extraction**: Cut out ROI patches around each detection
+3. **Overlap Removal**: Only maxima sharing a max-pool window compete; the dimmer
+   goes, with ties keeping the earlier detection
+4. **Box Extraction**: Clamp corners and retain one box per corner and frame,
+   keeping the brightest filtered detection
 5. **ROIBatch Construction**: Package results with camera calibration
 
 ### PSF-Aware Parameter Conversion
@@ -383,15 +393,26 @@ sigma_small = 1.0 × psf_sigma_pixels  # Match PSF
 sigma_large = 2.0 × psf_sigma_pixels  # Background suppression
 
 # Photon threshold → DoG intensity threshold
-σ_eff = √(psf_sigma_pixels² + sigma_small²)  # Effective sigma after filtering
-peak_filtered = min_photons / (2π × σ_eff²)
-minval = 0.65 × peak_filtered × effective_gain
+# P[i,j] is the integral over pixel (i,j) of a unit-photon Gaussian centered on a pixel.
+# Ks, Kl are the actual normalized small and large Gaussian kernels of this path.
+minval = min_photons * effective_gain * (sum(Ks .* P_small) - sum(Kl .* P_large))
 # effective_gain: 1 for IdealCamera (photons); QE / gain for SCMOSCamera (ADU)
 ```
+
+The standard kernels come from `dog_kernel_pair`, with common odd size at least
+`ceil(4 * sigma_large)`. The sCMOS reference uses uniform variance and its actual
+windows, each with half-width `ceil(3 * sigma)`. Pixel integrals use numerical
+quadrature accurate to 1e-4 relative; no empirical DoG factor is used.
+At PSF sigma 1.35 pixels, the response is about 0.547 (standard) or 0.581 (sCMOS)
+times `N / (2π * (sqrt(2) * 1.35)^2)`. A noise-free spot of `min_photons` photons
+centered on a pixel just reaches the threshold; at a pixel corner it needs about
+1.1× more. Noise and varying calibration affect real detections.
 
 ### Variance-Weighted Convolution
 For sCMOS cameras with readnoise map:
 ```julia
+# Calibration is converted per pixel when readnoise or gain is a map:
+variance = (readnoise ./ gain).^2  # ADU²
 # At each pixel (i,j):
 weightsum = sum(gaussian_weight / variance[ii,jj] * input[ii,jj])
 varsum = sum(gaussian_weight / variance[ii,jj])

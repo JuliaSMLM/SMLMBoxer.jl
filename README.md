@@ -39,6 +39,13 @@ roi_batch.frame_indices  # source frame for each ROI
 
 For complete SMLM workflows (detection + fitting + rendering), see [SMLMAnalysis.jl](https://github.com/JuliaSMLM/SMLMAnalysis.jl).
 
+The image's (rows, columns) must match the camera's pixel edges; a mismatch raises
+`DimensionMismatch`. Use a camera cropped to the image's field of view.
+Every `boxsize >= 1`, odd or even, is supported when it fits the image. Corners use
+`clamp(center - (boxsize - 1) ÷ 2, 1, image_size - boxsize + 1)` on each axis.
+If edge clamping gives multiple detections the same corner in a frame, the brightest
+filtered detection supplies the single retained box.
+
 ## GPU Support
 
 | Hardware | `backend = :auto` | `backend = :gpu` |
@@ -85,6 +92,8 @@ GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-p
 | Variance-weighted DoG | `SCMOSCamera` | Inverse-variance weighting via KernelAbstractions | Spatially-varying readnoise |
 
 Variance weighting is automatic when an `SCMOSCamera` is provided — low-noise pixels get high weight, high-noise pixels get reduced influence.
+The variance is `(readnoise / gain)^2` in ADU², evaluated per pixel when either
+calibration is a map; SMLMData's gain is in e⁻/ADU.
 
 ## Parameter Interfaces
 
@@ -108,6 +117,18 @@ roi_batch, info = getboxes(imagestack, camera, BoxerConfig(
 ```
 
 A kwargs interface is also available for one-off calls: `getboxes(imagestack, camera; psf_sigma=0.13, min_photons=500.0)`.
+
+`min_photons` sets the filtered peak of a noise-free, pixel-integrated Gaussian spot:
+a spot with that many photons centered on a pixel just reaches the threshold. A spot
+centered on a pixel corner needs about 1.1× more photons. The threshold uses the actual
+filter kernels (uniform variance for sCMOS) and effective gain, so the camera paths
+can give slightly different thresholds. Noise and spatially varying calibration affect
+which real spots pass it.
+
+`overlap` sets the local-maximum window `k = max(3, floor(Int, boxsize - overlap))`.
+Detections are at least `cld(k, 2)` pixels apart along either axis; raising `overlap`
+allows closer neighbors. Within a shared window, the dimmer maximum is removed;
+ties keep the earlier detection.
 
 ## Output Format
 

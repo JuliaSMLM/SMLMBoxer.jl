@@ -81,6 +81,9 @@ function dog_kernel_pair(sigma_small::Float32, sigma_large::Float32)
     return kernel_small, kernel_large
 end
 
+"""Half-width of the sCMOS Gaussian window, shared with photon calibration."""
+variance_gaussian_window(sigma::Float32) = ceil(Int, 3 * sigma)
+
 """
     dog_filter(imagestack, args; use_gpu=args.use_gpu)
 
@@ -193,7 +196,7 @@ function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
     # Get image dimensions (rows, cols, 1, frames)
     nrows, ncols, _, nframes = size(imagestack)
 
-    # Get variance map from camera (variance = readnoise²)
+    # Get variance map from camera in ADU²: variance = (readnoise / gain)^2
     # Convert to match imagestack element type to avoid type mismatch
     variance_map = convert(Matrix{eltype(imagestack)}, get_variance_map(args.camera, (nrows, ncols)))
 
@@ -337,7 +340,7 @@ function convolve_variance_weighted(imagestack::AbstractArray{T},
     nrows, ncols, _, nframes = size(imagestack)
 
     # Gaussian kernel window size
-    winsize = Int(ceil(3 * sigma))
+    winsize = variance_gaussian_window(sigma)
 
     if use_gpu && CUDA.functional()
         backend = CUDABackend()
@@ -451,6 +454,4 @@ function convolve(imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; us
 
     return filtered_stack  # Returns CuArray if use_gpu, Array otherwise
 end
-
-
 
