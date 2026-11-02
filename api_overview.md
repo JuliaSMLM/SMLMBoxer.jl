@@ -40,21 +40,29 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 - Multi-GPU support: NVML-based polling selects GPU with most free memory across all devices
 
 **Unified GPU retry loop** handles multi-process contention:
-1. Poll all GPUs via NVML (no CUDA context creation) for sufficient free memory and low utilization
-2. Acquire GPU context and run processing
-3. On GPU memory errors or an unavailable device (including context-creation races):
-   release memory via `GC.gc() + CUDA.reclaim()`, re-poll NVML with remaining timeout
-4. On any other error: release memory and raise the original error at once,
-   in both `:gpu` and `:auto` modes
-5. On timeout: `:auto` falls back to CPU, `:gpu` errors
-6. On success: reclaim GPU memory pool so finished jobs don't block other processes
+1. Check that one frame, including the 1.5x safety margin, fits at least one visible GPU's
+   total memory. If none can hold it, `:gpu` errors and `:auto` warns and uses the CPU
+   at once
+2. Poll all GPUs via NVML (no CUDA context creation) for sufficient free memory and
+   low utilization
+3. Acquire GPU context and run processing
+4. On GPU memory errors or an unavailable device (including context-creation races):
+   try to release memory via `GC.gc() + CUDA.reclaim()`. Halve the failed batch's frame
+   cap and retry immediately; only after a single-frame failure re-poll with the
+   remaining timeout
+5. On any other GPU failure: try to release memory; under `:auto`, warn and use the CPU
+   at once; under `:gpu`, raise the original error at once
+6. On timeout: `:auto` falls back to CPU, `:gpu` errors with the failed batch size and
+   memory need
+7. On success: reclaim the GPU memory pool (see the CUDA.jl 6.5.0 caveat below)
 
 **Backend modes:**
 - `:cpu` - Always CPU, no GPU involvement
 - `:gpu` - Require GPU, retry GPU memory errors and an unavailable device until
   `gpu_timeout` (default: Inf); error on timeout; raise any other error at once
 - `:auto` - Try GPU, retry GPU memory errors and an unavailable device until
-  `auto_timeout` (default: 300s); fall back to CPU on timeout; raise any other error at once
+  `auto_timeout` (default: 300s), then use the CPU; any other GPU failure uses the CPU
+  at once
 
 **Wait progress callback:**
 ```julia
@@ -390,9 +398,12 @@ Implements optimal inverse variance weighting for spatially-varying noise.
 - **Type Stability**: All inputs converted to Float32 at entry point
 - **Multi-GPU NVML Polling**: Scans all GPUs via NVML without creating CUDA contexts. Checks free memory, process contention, and compute utilization. First GPU with sufficient memory and low contention wins.
 - **Contention-Safe Retry**: GPU memory errors and an unavailable device are retried until
-  the timeout; any other error is raised at once in both `:gpu` and `:auto` modes. Each
-  failed attempt releases memory before retrying or raising the error.
-- **Memory Pool Reclaim**: Calls `GC.gc() + CUDA.reclaim()` after both successful and failed GPU processing to return memory to the system, preventing finished jobs from blocking other processes.
+  the timeout. Any other GPU failure uses the CPU at once under `:auto`, or raises the
+  original error at once under `:gpu`. Each failed attempt tries to release memory;
+  cleanup errors cannot mask the original error or prevent CPU fallback.
+- **Memory Pool Reclaim**: Calls `GC.gc() + CUDA.reclaim()` after successful GPU processing
+  and attempts it after failures. With CUDA.jl 6.5.0, freed pool memory stays reserved
+  until the process exits, unavailable to other processes; see the changelog's known issue.
 - **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting
 - **Typical Speedup**: 10-100x with GPU depending on image size and number of frames

@@ -11,6 +11,8 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 ## [0.3.4] - 2026-11-02
 
 ### Changed
+- The CPU `getboxes` path is precompiled for direct parameters, IdealCamera and sCMOS
+  filtering, and the `BoxerConfig` calling convention, without initializing a GPU.
 - SMLMBoxer no longer depends on cuDNN. On the GPU, standard DoG convolution and
   local-maximum pooling now use KernelAbstractions kernels; the CPU path still uses NNlib.
   Environments loading SMLMBoxer can use current CUDA and Reactant together: cuDNN's
@@ -25,6 +27,11 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   boxes per 100,000 change at a low threshold) and runs about 25% slower than under 0.9.
 
 ### Fixed
+- A repeatable GPU out-of-memory error retried the same batch until the timeout, forever
+  by default under `backend=:gpu`. Resource retries now halve the batch cap immediately;
+  only a single-frame failure resumes device polling. A frame too large for every visible
+  GPU fails at once under `:gpu`, or warns and uses the CPU under `:auto`. Timeout errors
+  report the failed batch's frame count and estimated memory need.
 - With an IdealCamera or no camera, the DoG filter treated the outside of the image as
   zero, so a background produced false boxes along the image edges. Edge pixels are now
   filtered with the in-bounds part of each Gaussian, as the sCMOS path already did;
@@ -39,10 +46,12 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   frame 1 (#19). Overlap removal no longer allocates per pair of boxes (a 600-box frame
   takes 0.25 ms instead of 19 ms), so the fix costs nothing measurable at the default
   `min_photons`; with 500-700 boxes per frame it adds 0.2-0.35 ms per frame.
-- `getboxes` retries GPU memory errors and an unavailable device until the timeout; any
-  other error is raised at once. Errors such as a readnoise map with the wrong size release
-  memory and raise the original error in both `backend=:gpu` and `backend=:auto`, instead of
-  retrying until the timeout or forever with the default `gpu_timeout=Inf` (#20).
+- `getboxes` retries GPU memory errors and an unavailable device until `auto_timeout`
+  under `backend=:auto`, then uses the CPU; any other GPU failure warns and uses the CPU
+  at once. Under `backend=:gpu`, resource errors retry until `gpu_timeout`, and other
+  errors raise at once with their original backtrace. Cleanup errors after a sticky CUDA
+  fault cannot mask the processing error or block CPU fallback. User errors such as a
+  readnoise map with the wrong size raise from the CPU fallback without retrying (#20).
 - Even local-maximum windows, such as boxsize 7 with overlap 3, no longer warn that
   cuDNN does not support asymmetric padding. The GPU window now matches the CPU's
   asymmetric padding exactly.

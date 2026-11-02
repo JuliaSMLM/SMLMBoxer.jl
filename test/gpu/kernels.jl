@@ -12,14 +12,21 @@ using Test, SMLMBoxer, CUDA, Random, NNlib, KernelAbstractions
     conv_gpu = Array(SMLMBoxer.convolve(x, dog; use_gpu = true))
     @test isapprox(conv_cpu, conv_gpu; atol = 1.0f-4)  # observed max |diff| is 6.7e-6
 
+    # Symmetric DoG kernels cannot detect a missing kernel flip.
+    asymmetric = rand(MersenneTwister(17), Float32, 5, 5)
+    asymmetric_cpu = SMLMBoxer.convolve(x, asymmetric; use_gpu = false)
+    asymmetric_gpu = Array(SMLMBoxer.convolve(x, asymmetric; use_gpu = true))
+    @test isapprox(asymmetric_cpu, asymmetric_gpu; atol = 1f-4)
+
     # Max pooling: KA kernel (GPU) vs NNlib (CPU), odd (5) and even (4) windows,
     # on the same CPU-filtered input.
-    y = conv_cpu
+    y = copy(conv_cpu)
+    y[32, 32, 1, 1] = NaN32
     y_gpu = CuArray(y)
     for k in (5, 4)
         max_cpu = SMLMBoxer.genlocalmaximage(y, k; minval = 0.0, use_gpu = false)
         max_gpu = Array(SMLMBoxer.genlocalmaximage(y, k; minval = 0.0, use_gpu = true))
-        @test max_cpu == max_gpu
+        @test isequal(max_cpu, max_gpu)
 
         # Also compare the raw (unmasked) max window, not only the thresholded image
         plo = (k - 1) ÷ 2
@@ -29,8 +36,29 @@ using Test, SMLMBoxer, CUDA, Random, NNlib, KernelAbstractions
         kernel! = SMLMBoxer.localmax_kernel!(CUDABackend())
         kernel!(raw_gpu, y_gpu, plo, k; ndrange = size(y)[[1, 2, 4]])
         KernelAbstractions.synchronize(CUDABackend())
-        @test raw_cpu == Array(raw_gpu)
+        @test isequal(raw_cpu, Array(raw_gpu))
     end
+end
+
+@testset "IdealCamera boxes near a NaN pixel match the CPU" begin
+    image = 20f0 .+ 3f0 .* randn(MersenneTwister(21), Float32, 96, 96, 2)
+    sigma = 1.35f0
+    spots = [(30, 30), (40, 52), (60, 60), (47, 41), (80, 20)]
+    for f in 1:2, (r, c) in spots, i in (r - 5):(r + 5), j in (c - 5):(c + 5)
+        image[i, j, f] += 2000f0 *
+            exp(-((i - r)^2 + (j - c)^2) / (2sigma^2)) / (2π * sigma^2)
+    end
+    image[45, 45, 1] = NaN32
+    camera = SMLMBoxer.IdealCamera(96, 96, 0.1f0)
+    kw = (psf_sigma = 0.135, min_photons = 500.0, boxsize = 7)
+    cpu, _ = getboxes(image, camera; backend = :cpu, kw...)
+    gpu, info = getboxes(image, camera; backend = :gpu, kw...)
+    @test info.backend == :gpu
+    @test !isempty(cpu.data)
+    @test isequal(gpu.data, cpu.data)
+    @test gpu.x_corners == cpu.x_corners
+    @test gpu.y_corners == cpu.y_corners
+    @test gpu.frame_indices == cpu.frame_indices
 end
 
 @testset "Standard DoG borders match the CPU and preserve GPU interiors" begin
