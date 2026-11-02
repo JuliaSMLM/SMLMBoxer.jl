@@ -47,9 +47,9 @@ Other device query errors warn and fall back to CPU in `:auto` mode, or propagat
 GPU memory errors and an unavailable device are retried until `auto_timeout` under `:auto`,
 then processing falls back to the CPU; any other GPU failure uses the CPU at once.
 Under `:gpu`, resource errors are retried until `gpu_timeout`; any other error is raised
-at once.
+at once; an interrupt (Ctrl-C) always stops the call.
 Resource retries halve the batch cap immediately; after a single-frame failure they
-resume device polling. A frame too large for every visible GPU errors under `:gpu` or
+resume device polling. A frame larger than any GPU can free errors under `:gpu` or
 uses the CPU immediately under `:auto`.
 
 # Returns
@@ -312,11 +312,13 @@ function _getboxes_impl(args::GetBoxesArgs)
       Int[]
     end
     frame_need = ceil(Int, 1.5 * min_memory_needed)
-    if !gpu_fallback && !frame_fits_some_gpu(frame_need, totals)
+    if !gpu_fallback && !frame_fits_some_gpu(frame_need, totals, GPU_CONTEXT_RESERVE)
       largest = isempty(totals) ? 0 : maximum(totals)
-      message = "No visible GPU can hold one frame: need " *
+      largest_free = largest >= GPU_CONTEXT_RESERVE ? largest - GPU_CONTEXT_RESERVE : 0
+      message = "No visible GPU can free enough memory for one frame: need " *
         "$(Base.format_bytes(frame_need)) including the safety margin; " *
-        "largest device has $(Base.format_bytes(largest))"
+        "largest device can free $(Base.format_bytes(largest_free)) " *
+        "(after a $(Base.format_bytes(GPU_CONTEXT_RESERVE)) context/driver reserve)"
       args.backend == :gpu && error(message)
       @warn "$message; using the CPU"
       gpu_fallback = true
@@ -353,6 +355,7 @@ function _getboxes_impl(args::GetBoxesArgs)
         gpu_succeeded = true
       catch e
         reclaim_failed_gpu_attempt()
+        e isa InterruptException && rethrow()
         if !is_gpu_resource_error(e)
           args.backend == :gpu && rethrow()
           @warn "GPU processing failed; using the CPU" exception=(e, catch_backtrace())
