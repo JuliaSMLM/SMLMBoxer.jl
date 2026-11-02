@@ -32,6 +32,9 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 - `gpu_timeout::Float64`: Max wait for GPU in :gpu mode (default: Inf)
 - `on_wait::Union{Function,Nothing}`: Optional callback `(elapsed, available, required) -> nothing` for GPU wait progress (default: nothing)
 
+GPU memory and CUDA driver errors during processing are retried until the timeout.
+Any other processing error is raised at once in both :gpu and :auto modes.
+
 # Examples
 ```julia
 # PSF-aware (recommended)

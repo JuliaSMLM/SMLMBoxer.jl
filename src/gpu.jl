@@ -25,6 +25,14 @@ failed context creation). `:auto` falls back to the CPU on these; anything else 
 is_gpu_query_error(e) = e isa CUDA.NVML.NVMLError || e isa CUDA.CuError
 
 """
+    is_gpu_resource_error(e) -> Bool
+
+True for GPU memory or CUDA driver errors, including context-creation races. These are
+retried until the timeout; any other processing error is raised at once.
+"""
+is_gpu_resource_error(e) = e isa CUDA.OutOfGPUMemoryError || e isa CUDA.CuError
+
+"""
     nvml_device(i) -> CUDA.NVML.Device
 
 Return the NVML device for GPU `i`, a 0-based CUDA ordinal, without creating a context.
@@ -249,8 +257,9 @@ when supported. If NVML cannot report memory, queries CUDA on that device and
 skips its NVML contention checks. Polls through timeout with jittered backoff.
 First GPU with sufficient free memory and low contention wins.
 
-Layer 2 (runtime try/catch): Applied by caller for :auto mode. If CUDA errors
-occur during processing despite NVML pre-check, falls back to CPU.
+Layer 2 (runtime try/catch): Applied by `getboxes` for :auto and :gpu modes. GPU memory
+and CUDA driver errors during processing are retried until the timeout. Any other error
+is raised at once. On timeout, :auto falls back to CPU and :gpu errors.
 
 # Arguments
 - `backend`: :cpu, :gpu, or :auto

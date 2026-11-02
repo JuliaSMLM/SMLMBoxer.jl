@@ -8,6 +8,25 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
+### Changed
+- SMLMBoxer no longer depends on cuDNN. On the GPU, standard DoG convolution and
+  local-maximum pooling now use KernelAbstractions kernels; the CPU path still uses NNlib.
+  Environments loading SMLMBoxer can use current CUDA and Reactant together: cuDNN's
+  CUDNN_jll no longer conflicts with Reactant's bundled cuDNN in one process (#20).
+- KernelAbstractions compat is `0.9.38 - 0.10`: Reactant environments resolve 0.9, while
+  current CUDA and AMDGPU environments resolve 0.10.
+
+### Fixed
+- Overlap removal now applies to every frame of a stack; previously it applied only to
+  frame 1 (#19).
+- `getboxes` retries only GPU memory and CUDA driver errors until the timeout. Other
+  processing errors, such as a readnoise map with the wrong size, now release memory and
+  raise the original error at once in both `backend=:gpu` and `backend=:auto`, instead of
+  retrying until the timeout or forever with the default `gpu_timeout=Inf` (#20).
+- Even local-maximum windows, such as boxsize 7 with overlap 3, no longer warn that
+  cuDNN does not support asymmetric padding. The GPU window now matches the CPU's
+  asymmetric padding exactly.
+
 ## [0.3.3] - 2026-10-27
 
 ### Fixed

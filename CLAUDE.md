@@ -40,7 +40,7 @@ imagestack → reshape → DoG filter → local maxima → overlap removal → b
 | `types.jl` | `BoxerConfig`, `BoxesInfo`, `GetBoxesArgs` (internal); PSF-to-pixel conversion logic |
 | `interface.jl` | `getboxes()` public API (2 calling conventions); batching logic; GPU retry loop |
 | `filter.jl` | DoG filtering — standard path via NNlib (CPU) / KernelAbstractions kernel (GPU), variance-weighted path via KernelAbstractions |
-| `localmax.jl` | Local maxima via NNlib max pooling; sparse GPU coordinate extraction |
+| `localmax.jl` | Local maxima: NNlib max pooling (CPU), KernelAbstractions kernel (GPU); sparse GPU coordinate extraction |
 | `coords.jl` | Coordinate extraction (`maxima2coords`, `_gpu_maxima2coords`); `removeoverlap()` |
 | `boxes.jl` | ROI patch cutting (`getboxstack`, `fillbox!`); handles image boundary cases |
 | `gpu.jl` | NVML polling (context-free), CUDA memory waiting, backend selection, memory estimation |
