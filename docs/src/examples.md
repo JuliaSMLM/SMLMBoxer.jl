@@ -81,6 +81,9 @@ println("First detection at ($(first_roi.corner[1]), $(first_roi.corner[2]))")
 
 This example demonstrates variance-weighted detection for sCMOS cameras with spatially-varying noise.
 
+Variance weights use `(readnoise / gain)^2` in ADU², per pixel when either calibration
+is a map. The image dimensions must match the camera's pixel edges.
+
 ### Creating sCMOS Camera
 
 ```julia

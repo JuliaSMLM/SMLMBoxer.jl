@@ -125,16 +125,24 @@ The `getboxes()` function implements a multi-stage blob detection pipeline:
    - DoG = Small - Large highlights blob features
    - Pixels near the image edge are filtered with the in-bounds part of each Gaussian, on both filtering paths
 
-2. **Variance Weighting (sCMOS)**: When an SCMOSCamera is provided, each pixel's contribution is weighted by inverse variance (1/readnoise²):
+2. **Variance Weighting (sCMOS)**: Each pixel is weighted by inverse variance in ADU²,
+   with `variance = (readnoise / gain)^2` (gain in e⁻/ADU), including per-pixel maps:
    - Low-noise pixels receive high weight (strong influence)
    - High-noise pixels receive low weight (reduced false positives)
    - Implements optimal detection theory for spatially-varying noise
 
 3. **Local Maxima Detection**: Identifies peaks in the filtered image above the threshold
 
-4. **Overlap Removal**: Filters detections to ensure minimum separation between spots
+4. **Overlap Removal**: Removes the dimmer maximum only within a shared max-pool
+   window; ties keep the earlier detection. With
+   `k = max(3, floor(Int, boxsize - overlap))`, detections are at least `cld(k, 2)`
+   pixels apart along either axis.
 
-5. **ROI Extraction**: Cuts out square regions around each detection with coordinate tracking
+5. **ROI Extraction**: Supports odd and even sizes, with corners clamped to the image.
+   One box per corner and frame is kept, from the brightest filtered detection.
+
+The image's (rows, columns) must match the camera's pixel edges, otherwise `getboxes`
+raises `DimensionMismatch`. Crop the camera together with the image.
 
 ## PSF-Aware Interface
 
@@ -150,6 +158,12 @@ This automatically calculates:
 - σ_small = 1.0 × psf_sigma (in pixels) - matches PSF for optimal detection
 - σ_large = 2.0 × psf_sigma (in pixels) - background suppression
 - minval threshold from photons accounting for PSF spreading and DoG response
+
+The threshold is the actual filter's peak response to a noise-free, pixel-integrated
+Gaussian with `min_photons` photons centered on a pixel, times effective gain.
+A spot centered on a pixel corner needs about 1.1× more photons. The sCMOS reference
+uses uniform variance and its own Gaussian windows; its threshold can differ slightly
+from the standard path. Noise and varying calibration affect real detections.
 
 ## Advanced Interface
 

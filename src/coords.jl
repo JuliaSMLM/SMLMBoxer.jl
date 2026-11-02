@@ -106,19 +106,20 @@ end
 """
    removeoverlap(coords, args)
 
-Remove overlapping coords based on distance.
-Boxes are compared in index order, dropping the dimmer of each overlapping pair.
-Ties drop the later box.
+Remove maxima sharing a max-pool window, using Chebyshev distance < cld(k, 2),
+where k = max(3, floor(Int, boxsize - overlap)). Compare in index order, dropping the
+dimmer maximum; ties drop the later one. Keep intensities for clamped-corner selection.
 
 # Arguments
 - `coords`: List of coords
 - `args`: Parameters
 
 # Returns
-- `coords`: Coords with overlaps removed
+- `coords`: Matrix of (row, col, frame, filtered intensity) with overlaps removed
 """
 function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
-    overlap = kwargs.overlap
+    k = max(3, floor(Int, kwargs.boxsize - kwargs.overlap))
+    separation = cld(k, 2)
     for f in eachindex(coords)
         c = coords[f]
         ncoords = size(c, 1)
@@ -133,8 +134,7 @@ function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
                     if keep[j]
                         dx = xi - c[j, 1]
                         dy = yi - c[j, 2]
-                        dist = sqrt(dx^2 + dy^2)
-                        if dist <= overlap
+                        if max(abs(dx), abs(dy)) < separation
                             if intensity_i < c[j, 4]
                                 keep[i] = false
                                 break
@@ -148,5 +148,5 @@ function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
         end
         coords[f] = coords[f][keep, :]
     end
-    return vcat(coords...)[:, 1:3]
+    return vcat(coords...)
 end

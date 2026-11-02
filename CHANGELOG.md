@@ -8,6 +8,39 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Breaking
+- `min_photons` now uses the actual DoG filter response to a pixel-integrated Gaussian,
+  replacing the empirical 0.65 factor. A noise-free spot centered on a pixel just reaches
+  the threshold at that photon count; a pixel-corner spot needs about 1.1× more. The
+  standard and sCMOS paths use their own kernels. Among 62,682 clean in-focus lab spots,
+  half are detected near 487 fitted photons at `min_photons = 500`, versus 566 before.
+- Images must match their camera's (rows, columns), or raise `DimensionMismatch`.
+  A 192 × 192 crop passed with its full 256 × 256 camera previously returned 24,347
+  boxes with coordinates silently wrong by 64 pixels.
+- sCMOS variance weighting now uses `(readnoise / gain)^2` in ADU², including maps.
+  On real frames with gain 0.40–0.50 e⁻/ADU, 2.3% of boxes change: added boxes hold
+  507 clean in-focus spots of at least 500 photons, versus 425 in the removed boxes.
+
+### Fixed
+- Increasing `overlap` now permits closer neighbors according to the max-pool window.
+  Only maxima sharing that window compete; the dimmer goes, with ties keeping the
+  earlier detection. On 2000 lab frames this adds 66 boxes at boxsize 9 / overlap 3,
+  1,396 at boxsize 9 / overlap 4, and 201 at boxsize 11 / overlap 4, removing none;
+  default-overlap results are unchanged.
+- Even box sizes use the same clamped-corner rule as odd sizes; real-frame box sizes
+  8 and 10 previously raised `DimensionMismatch`. Odd-size crops remain unchanged.
+- After clamping, keep only the brightest filtered detection per (corner, frame).
+  This removes the 3–13 duplicate boxes per 2000 real frames seen in 0.3.4.
+- The chunked `recommend_batch_size` example offsets frame indices by the chunk start.
+  The lab caller already tracks this offset; no new keyword is needed.
+
+### Changed
+- Removed unused internal `find_best_gpu`, `select_backend`, `wait_for_gpu_memory`,
+  and `estimate_gpu_memory` helpers and the discarded per-box camera ROI construction.
+  The per-frame memory estimator and GPU memory cleanup are unchanged.
+
 ## [0.3.4] - 2026-11-02
 
 ### Changed
