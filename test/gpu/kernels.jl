@@ -32,3 +32,23 @@ using Test, SMLMBoxer, CUDA, Random, NNlib, KernelAbstractions
         @test raw_cpu == Array(raw_gpu)
     end
 end
+
+@testset "Standard DoG borders match the CPU and preserve GPU interiors" begin
+    image = 50f0 .+ rand(MersenneTwister(42), Float32, 64, 64, 4)
+    x = SMLMBoxer.reshape_for_flux(image)
+    args = SMLMBoxer.GetBoxesArgs(; imagestack = image,
+        sigma_small = 1.3, sigma_large = 2.6, backend = :cpu)
+    dog = SMLMBoxer.dog_kernel(1.3f0, 2.6f0)
+    filtered_cpu = SMLMBoxer.dog_filter(x, args; use_gpu = false)
+    filtered_gpu = Array(SMLMBoxer.dog_filter(x, args; use_gpu = true))
+    original_gpu = Array(SMLMBoxer.convolve(CuArray(x), dog; use_gpu = true))
+
+    p = size(dog, 1) ÷ 2
+    interior = (p + 1):(64 - p)
+    border = [i <= p || i > 64 - p || j <= p || j > 64 - p
+              for i in 1:64, j in 1:64, _ in 1:1, _ in 1:4]
+    @test all(isapprox.(filtered_gpu[interior, interior, :, :],
+        filtered_cpu[interior, interior, :, :]; atol = 1f-4, rtol = 0))
+    @test all(isapprox.(filtered_gpu[border], filtered_cpu[border]; atol = 1f-4, rtol = 0))
+    @test filtered_gpu[interior, interior, :, :] == original_gpu[interior, interior, :, :]
+end

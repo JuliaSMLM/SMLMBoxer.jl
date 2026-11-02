@@ -12,7 +12,7 @@ image = zeros(Float32, img_size, img_size)
 for (r, c) in peaks
     image[r, c] = 100.0
 end
-camera = IdealCamera(1:(img_size + 1), 1:(img_size + 1), 0.1f0)
+camera = IdealCamera(1:img_size, 1:img_size, 0.1f0)
 
 (roi_batch, _) = getboxes(
     image, camera;

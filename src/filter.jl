@@ -62,14 +62,23 @@ Compute difference of Gaussian kernels.
 - `dog`: Difference of Gaussians kernel
 """
 function dog_kernel(sigma_small::Float32, sigma_large::Float32)
+    kernel_small, kernel_large = dog_kernel_pair(sigma_small, sigma_large)
+    return kernel_small .- kernel_large
+end
+
+"""
+    dog_kernel_pair(sigma_small, sigma_large)
+
+Return the two normalized Gaussian kernels used by `dog_kernel`, with the same odd size.
+"""
+function dog_kernel_pair(sigma_small::Float32, sigma_large::Float32)
     minkernelsize = 3
     kernelsize = max(minkernelsize, Int(ceil(sigma_large * 4)))
     # Round up to nearest odd number for symmetry when using SamePad 
     kernelsize = isodd(ceil(kernelsize)) ? ceil(kernelsize) : ceil(kernelsize) + 1
     kernel_small = gaussian_2d(sigma_small, kernelsize)
     kernel_large = gaussian_2d(sigma_large, kernelsize)
-    dog = kernel_small .- kernel_large
-    return dog
+    return kernel_small, kernel_large
 end
 
 """
@@ -77,6 +86,8 @@ end
 
 Apply DoG filter to imagestack based on args.
 Uses variance-weighted filtering if sCMOS camera is provided.
+For an IdealCamera or no camera, each Gaussian is normalized by its in-bounds weights
+at image edges, as in the sCMOS path. Interior convolution values are left untouched.
 
 # Arguments
 - `imagestack`: Input array of image data
@@ -98,11 +109,64 @@ function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs; use_g
         filtered_stack = dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args; use_gpu)
     else
         # Standard DoG filtering (may return CuArray if use_gpu=true)
-        dog = dog_kernel(Float32(sigma_small), Float32(sigma_large))
-        filtered_stack = convolve(imagestack, dog; use_gpu)
+        kernel_small, kernel_large = dog_kernel_pair(Float32(sigma_small), Float32(sigma_large))
+        dog = kernel_small .- kernel_large
+        if use_gpu && CUDA.functional()
+            backend = CUDABackend()
+            input = imagestack isa CuArray ? imagestack : CuArray(imagestack)
+            kernel_small = CuArray(kernel_small)
+            kernel_large = CuArray(kernel_large)
+        else
+            backend = CPU()
+            input = imagestack
+        end
+        filtered_stack = convolve(input, dog; use_gpu)
+        nrows, ncols, _, nframes = size(input)
+        kernel! = dog_border_kernel!(backend)
+        kernel!(filtered_stack, input, kernel_small, kernel_large, size(dog, 1) ÷ 2;
+                ndrange=(nrows, ncols, nframes))
+        KernelAbstractions.synchronize(backend)
     end
 
     return filtered_stack  # May be CuArray if use_gpu=true
+end
+
+"""
+    dog_border_kernel!(out, img, kernel_small, kernel_large, p)
+
+Replace only border pixels of a standard DoG convolution with the difference of the
+two Gaussians normalized by their in-bounds weights. Runs on CPU and GPU, batched over
+frames. If either image dimension is at most `2p`, every pixel is a border pixel.
+"""
+@kernel function dog_border_kernel!(out, @Const(img), @Const(kernel_small), @Const(kernel_large), p)
+    i, j, f = @index(Global, NTuple)
+    nrows, ncols = size(img, 1), size(img, 2)
+
+    # KA 0.9 CPU kernels forbid return statements: skip all work for interior pixels.
+    if !(p < i <= nrows - p && p < j <= ncols - p)
+        k = size(kernel_small, 1)
+        sum_small = 0f0
+        sum_large = 0f0
+        weight_small = 0f0
+        weight_large = 0f0
+        for b in 1:k, a in 1:k
+            ii = i + a - 1 - p
+            jj = j + b - 1 - p
+            if 1 <= ii <= nrows && 1 <= jj <= ncols
+                # Match the true-convolution flip in dog_conv_kernel!.
+                @inbounds begin
+                    ws = kernel_small[k + 1 - a, k + 1 - b]
+                    wl = kernel_large[k + 1 - a, k + 1 - b]
+                    pixel = Float32(img[ii, jj, 1, f])
+                    sum_small += ws * pixel
+                    sum_large += wl * pixel
+                    weight_small += ws
+                    weight_large += wl
+                end
+            end
+        end
+        @inbounds out[i, j, 1, f] = sum_small / weight_small - sum_large / weight_large
+    end
 end
 
 """
@@ -341,7 +405,7 @@ end
     convolve(imagestack, kernel; use_gpu=false)
 
 Convolve imagestack with given kernel using NNlib on the CPU, or a KernelAbstractions
-kernel on the GPU.
+kernel on the GPU. Uses plain zero padding on every side; no edge normalization.
 
 # Arguments
 - `imagestack`: Input array of image data (H, W, 1, F)

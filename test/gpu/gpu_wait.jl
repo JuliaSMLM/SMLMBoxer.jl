@@ -9,7 +9,7 @@
 using Test, SMLMBoxer, SMLMData, CUDA
 
 img = rand(Float32, 128, 128, 10)
-camera = IdealCamera(1:129, 1:129, 0.1f0)
+camera = IdealCamera(1:128, 1:128, 0.1f0)
 kw = (sigma_small = 1.5, sigma_large = 3.0, minval = 0.1)
 
 @testset "GPU available" begin
@@ -33,7 +33,7 @@ end
 @testset "GPU unavailable" begin
     # One 4096x4096 frame needs ~400 MB (~600 MB with the 1.5x margin); leave ~200 MB free.
     big = rand(Float32, 4096, 4096, 1)
-    big_camera = IdealCamera(1:4097, 1:4097, 0.1f0)
+    big_camera = IdealCamera(1:4096, 1:4096, 0.1f0)
     need = SMLMBoxer.estimate_gpu_memory_per_frame(4096, 4096, big_camera)
     leave = 200_000_000
 

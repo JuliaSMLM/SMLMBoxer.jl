@@ -7,7 +7,8 @@ ROI batch with location tracking and processing metadata.
 # Arguments
 - `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
 - `camera::Union{AbstractCamera,Nothing}`: Optional camera object (IdealCamera or SCMOSCamera) from SMLMData.
-  If not provided, a default IdealCamera is created.
+  If not provided, an IdealCamera of the image's size with 1 um pixels is created
+  (coordinates in um equal pixels).
 
 ## Primary Interface (Recommended - PSF-Aware)
 - `psf_sigma::Real`: PSF sigma in microns (physical units, e.g., 0.13 for 130nm PSF).
@@ -54,7 +55,8 @@ Tuple of `(ROIBatch, BoxesInfo)`:
 - `x_corners`: Vector of x (column) corner positions in camera coordinates
 - `y_corners`: Vector of y (row) corner positions in camera coordinates
 - `frame_indices`: Vector of frame indices for each ROI
-- `camera`: Camera object (provided or default IdealCamera)
+- `camera`: Provided camera, or an IdealCamera of the image's size with 1 um pixels
+  (coordinates in um equal pixels)
 - `roi_size`: Size of each ROI (square)
 
 `BoxesInfo` with the following fields:
@@ -100,7 +102,8 @@ This provides GPU acceleration for sCMOS cameras (10-100x speedup on large image
 
 Standard DoG convolution is used when no camera is provided or with IdealCamera.
 The convolution runs as a KernelAbstractions kernel on the GPU, or via NNlib on the CPU,
-depending on `backend`.
+depending on `backend`. At image edges, each Gaussian is normalized by its in-bounds
+weights, as in the sCMOS path. Interior pixels retain the original convolution values.
 
 After filtering, local maxima above `minval` are identified. Boxes are cut
 out around each maximum, excluding overlaps.
@@ -367,16 +370,16 @@ function _getboxes_impl(args::GetBoxesArgs)
     frame_indices[i] = Int32(boxcoords[i, 3])
   end
 
-  # Use provided camera or create default IdealCamera if none provided
+  # Use provided camera or create an image-sized IdealCamera with 1 um pixels
   camera = if args.camera !== nothing
     args.camera
   else
-    # Create minimal IdealCamera with pixel edges matching image size
+    # The three-argument constructor takes pixel centers
     img_rows, img_cols = size(imagestack, 1), size(imagestack, 2)
     IdealCamera(
-      1:(img_cols+1),  # pixel_edges_x
-      1:(img_rows+1),  # pixel_edges_y
-      1.0f0            # pixel size (arbitrary for default)
+      1:img_cols,  # pixel centers x
+      1:img_rows,  # pixel centers y
+      1.0f0        # pixel size (um)
     )
   end
 
