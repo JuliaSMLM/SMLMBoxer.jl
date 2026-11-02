@@ -42,19 +42,19 @@ When `SCMOSCamera` is provided, implements SMITE-style inverse variance weightin
 **Unified GPU retry loop** handles multi-process contention:
 1. Poll all GPUs via NVML (no CUDA context creation) for sufficient free memory and low utilization
 2. Acquire GPU context and run processing
-3. On GPU memory or CUDA driver errors (including TOCTOU context races): release memory
-   via `GC.gc() + CUDA.reclaim()`, re-poll NVML with remaining timeout
-4. On any other processing error: release memory and raise the original error at once,
+3. On GPU memory errors or an unavailable device (including context-creation races):
+   release memory via `GC.gc() + CUDA.reclaim()`, re-poll NVML with remaining timeout
+4. On any other error: release memory and raise the original error at once,
    in both `:gpu` and `:auto` modes
 5. On timeout: `:auto` falls back to CPU, `:gpu` errors
 6. On success: reclaim GPU memory pool so finished jobs don't block other processes
 
 **Backend modes:**
 - `:cpu` - Always CPU, no GPU involvement
-- `:gpu` - Require GPU, retry resource errors until `gpu_timeout` (default: Inf),
-  error if unavailable; raise other processing errors at once
-- `:auto` - Try GPU, retry resource errors until `auto_timeout` (default: 300s),
-  fall back to CPU on timeout; raise other processing errors at once
+- `:gpu` - Require GPU, retry GPU memory errors and an unavailable device until
+  `gpu_timeout` (default: Inf); error on timeout; raise any other error at once
+- `:auto` - Try GPU, retry GPU memory errors and an unavailable device until
+  `auto_timeout` (default: 300s); fall back to CPU on timeout; raise any other error at once
 
 **Wait progress callback:**
 ```julia
@@ -389,9 +389,9 @@ Implements optimal inverse variance weighting for spatially-varying noise.
 - **GPU Memory Management**: Automatically batches frames if image stack exceeds GPU memory
 - **Type Stability**: All inputs converted to Float32 at entry point
 - **Multi-GPU NVML Polling**: Scans all GPUs via NVML without creating CUDA contexts. Checks free memory, process contention, and compute utilization. First GPU with sufficient memory and low contention wins.
-- **Contention-Safe Retry**: GPU memory and CUDA driver errors (including TOCTOU context
-  races) release memory and re-poll with the remaining timeout budget. Any other processing
-  error is raised at once after releasing memory, in both `:gpu` and `:auto` modes.
+- **Contention-Safe Retry**: GPU memory errors and an unavailable device are retried until
+  the timeout; any other error is raised at once in both `:gpu` and `:auto` modes. Each
+  failed attempt releases memory before retrying or raising the error.
 - **Memory Pool Reclaim**: Calls `GC.gc() + CUDA.reclaim()` after both successful and failed GPU processing to return memory to the system, preventing finished jobs from blocking other processes.
 - **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting

@@ -405,11 +405,12 @@ end
     convolve(imagestack, kernel; use_gpu=false)
 
 Convolve imagestack with given kernel using NNlib on the CPU, or a KernelAbstractions
-kernel on the GPU. Uses plain zero padding on every side; no edge normalization.
+kernel on the GPU. Requires an odd square kernel, otherwise throws `ArgumentError`.
+Uses plain zero padding on every side; no edge normalization.
 
 # Arguments
 - `imagestack`: Input array of image data (H, W, 1, F)
-- `kernel`: Kernel to convolve with (K, K)
+- `kernel`: Kernel to convolve with (K, K), where K is odd
 
 # Keyword Arguments
 - `use_gpu`: Whether to use GPU
@@ -418,6 +419,10 @@ kernel on the GPU. Uses plain zero padding on every side; no edge normalization.
 - `filtered_stack`: Convolved image stack
 """
 function convolve(imagestack::AbstractArray{<:Real}, kernel::Matrix{Float32}; use_gpu = false)
+    if size(kernel, 1) != size(kernel, 2) || iseven(size(kernel, 1))
+        throw(ArgumentError("convolve requires an odd square kernel"))
+    end
+
     # Reshape kernel to NNlib format: (height, width, input_channels, output_channels)
     weights = reshape(kernel, size(kernel)..., 1, 1)
 
