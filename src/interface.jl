@@ -18,7 +18,7 @@ ROI batch with location tracking and processing metadata.
   **Requires camera to be provided.**
 - `min_photons::Real`: Minimum total photons for detection (default: 500.0).
   A noise-free, pixel-integrated Gaussian centered on a pixel just reaches the
-  threshold at this photon count; centered on a pixel corner it needs about 1.1× more.
+  threshold at this photon count. See `BoxerConfig` for subpixel-position effects.
 
 ## Advanced Interface (Direct Control)
 For expert users who want direct control over filter parameters:
@@ -29,7 +29,7 @@ For expert users who want direct control over filter parameters:
 Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 
 ## Other Parameters
-- `boxsize::Int`: ROI size in pixels, odd or even, at least 1 (default: 7).
+- `boxsize::Int`: ROI size in pixels, odd or even (default: 7).
 - `overlap::Real`: pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
   pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
@@ -115,8 +115,8 @@ The convolution runs as a KernelAbstractions kernel on the GPU, or via NNlib on 
 depending on `backend`. At image edges, each Gaussian is normalized by its in-bounds
 weights, as in the sCMOS path. Interior pixels retain the original convolution values.
 
-After filtering, local maxima above `minval` are identified. Maxima within the same
-max-pool window compete by filtered brightness; ties keep the earlier detection.
+After filtering, local maxima above `minval` are identified. Maxima sharing a
+max-pool window have equal intensities; keep the earlier detection.
 Boxes use `clamp(center - (boxsize - 1) ÷ 2, 1, image_size - boxsize + 1)` on each axis.
 After clamping, only the brightest filtered detection per corner and frame is kept.
 
@@ -420,9 +420,7 @@ function _getboxes_impl(args::GetBoxesArgs)
 
   maxcoords = removeoverlap(coords, args)
 
-  # Ensure imagestack is on CPU for box extraction (uses scalar indexing)
-  imagestack_cpu = imagestack isa CuArray ? Array(imagestack) : imagestack
-  boxstack, boxcoords = getboxstack(imagestack_cpu, maxcoords, args)
+  boxstack, boxcoords = getboxstack(imagestack, maxcoords, args)
 
   # Create ROIBatch
   # Convert boxcoords (row, col, frame) to separate x_corners, y_corners vectors

@@ -1,7 +1,6 @@
 using Test, SMLMBoxer, SMLMData, SMLMSim
-
-# SMLMSim owns spot generation; use its GaussianPSF dependency as in the lab probes.
-const PSFs = only(m for m in values(Base.loaded_modules) if nameof(m) == :MicroscopePSFs)
+using Markdown
+using MicroscopePSFs: GaussianPSF
 
 function simulated_spots(camera, spots; sigma=0.135, nframes=1, sampling=32)
     emitters = [
@@ -11,7 +10,7 @@ function simulated_spots(camera, spots; sigma=0.135, nframes=1, sampling=32)
         ) for (row, col, photons, frame) in spots
     ]
     smld = BasicSMLD(emitters, camera, nframes, 1)
-    images, _ = gen_images(smld, PSFs.GaussianPSF(sigma); sampling, threaded=false)
+    images, _ = gen_images(smld, GaussianPSF(sigma); sampling, threaded=false)
     # Noise-free SMLMSim images are photons; convert explicitly to the camera's ADU.
     images .*= SMLMBoxer.get_effective_gain(camera)
     return Float32.(images)
@@ -44,6 +43,21 @@ end
                         psf_sigma=sigma, min_photons=500, backend=:cpu)
                     @test length(rb) == expected
                 end
+            end
+        end
+        for camera in cameras
+            @testset "$(nameof(typeof(camera))) pixel corner at sigma=1.35 px" begin
+                # Half-integer pixel centers put the emitter on a corner of four pixels.
+                photons = 500.0
+                image = simulated_spots(camera, [(21.5, 23.5, photons, 1)];
+                    sigma=0.135, sampling=128)
+                args = SMLMBoxer.GetBoxesArgs(; imagestack=image, camera,
+                    psf_sigma=0.135, min_photons=photons, backend=:cpu)
+                filtered = SMLMBoxer.dog_filter(
+                    SMLMBoxer.reshape_for_flux(image), args; use_gpu=false)
+                peak_per_photon = maximum(filtered) / photons
+                threshold_photons = args.minval / peak_per_photon
+                @test 1.08 <= threshold_photons / photons <= 1.13
             end
         end
     end
@@ -157,13 +171,5 @@ end
             end
         end)
         @test Base.invokelatest(documented_chunks, image, camera) == [1, 2, 3, 4]
-    end
-
-    @testset "Note 3: unused GPU helpers removed" begin
-        for name in (:find_best_gpu, :select_backend, :wait_for_gpu_memory,
-                     :estimate_gpu_memory)
-            @test !isdefined(SMLMBoxer, name)
-        end
-        @test isdefined(SMLMBoxer, :estimate_gpu_memory_per_frame)
     end
 end

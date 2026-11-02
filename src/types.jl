@@ -13,7 +13,9 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
   Requires camera for pixel conversion. When set, overrides sigma_small/sigma_large/minval.
 - `min_photons::Float64`: Photon threshold (default: 500.0). A noise-free,
   pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
-  photon count; centered on a pixel corner it needs about 1.1× more.
+  photon count. A spot centered on a pixel corner needs more photons, about 1.1× at a
+  PSF sigma of 1.35 pixels (0.135 µm on 0.1 µm pixels), 1.2× at 1 pixel and
+  1.5× at 0.7 pixel.
 
 ## Advanced Interface (Direct Control)
 - `sigma_small::Float64`: Small Gaussian sigma in pixels (default: 1.0)
@@ -21,7 +23,7 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 - `minval::Float64`: DoG intensity threshold (default: 0.0)
 
 ## Box Parameters
-- `boxsize::Int`: ROI box size in pixels, odd or even, at least 1 (default: 7)
+- `boxsize::Int`: ROI box size in pixels, odd or even (default: 7)
 - `overlap::Float64`: pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
   pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
@@ -180,7 +182,7 @@ Convert total photon count threshold to DoG filter intensity threshold in image 
 # Calibration
 The threshold is the peak response of this path's actual normalized Gaussian kernels
 to a noise-free, pixel-integrated Gaussian of `min_photons` photons centered on a pixel,
-times effective gain. A spot centered on a pixel corner needs about 1.1× more photons.
+times effective gain. See `BoxerConfig` for subpixel-position effects.
 The standard path uses `dog_kernel_pair`; the sCMOS reference uses its own windows
 under uniform variance. Spatially varying calibration and noise affect real detections.
 """
@@ -241,7 +243,7 @@ keyword arguments rather than constructing this directly.
   Requires camera to be provided for pixel size conversion.
 - `min_photons::Real`: Photon threshold (default: 500.0). A noise-free,
   pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
-  photon count; centered on a pixel corner it needs about 1.1× more.
+  photon count. See `BoxerConfig` for subpixel-position effects.
 
 When psf_sigma is provided:
 - Converted to pixels using camera pixel size
@@ -257,7 +259,7 @@ When psf_sigma is provided:
 # Other Parameters
 - `imagestack`: Input image stack
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
-- `boxsize::Int`: ROI box size in pixels, odd or even, at least 1 (default: 7)
+- `boxsize::Int`: ROI box size in pixels, odd or even (default: 7)
 - `overlap::Real`: pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
   pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
@@ -331,74 +333,6 @@ mutable struct GetBoxesArgs
         new(imagestack, camera, boxsize, Float32(overlap), σ_small, σ_large, min_val,
             initial_use_gpu, backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait)
     end
-end
-
-"""
-    pixels_to_microns(pixel_coords, camera::AbstractCamera)
-
-Convert pixel coordinates (row, col) to micron coordinates (x, y) using camera geometry.
-
-# Arguments
-- `pixel_coords`: N×2 matrix of (row, col) coordinates
-- `camera`: Camera object with pixel_edges_x and pixel_edges_y
-
-# Returns
-- N×2 matrix of (x, y) coordinates in microns
-"""
-function pixels_to_microns(pixel_coords::AbstractMatrix, camera::AbstractCamera)
-    ncoords = size(pixel_coords, 1)
-    coords_microns = similar(pixel_coords)
-
-    for i in 1:ncoords
-        row, col = pixel_coords[i, 1], pixel_coords[i, 2]
-        # Convert to 1-based pixel centers
-        # pixel_edges are the edges, so center of pixel i is at (edges[i] + edges[i+1])/2
-        x = (camera.pixel_edges_x[Int(col)] + camera.pixel_edges_x[Int(col)+1]) / 2
-        y = (camera.pixel_edges_y[Int(row)] + camera.pixel_edges_y[Int(row)+1]) / 2
-        coords_microns[i, 1] = x
-        coords_microns[i, 2] = y
-    end
-
-    return coords_microns
-end
-
-"""
-    extract_camera_roi(camera::AbstractCamera, row_range, col_range)
-
-Extract a camera ROI with calibration data for the specified pixel region.
-
-# Arguments
-- `camera`: Source camera object
-- `row_range`: Range of rows to extract
-- `col_range`: Range of columns to extract
-
-# Returns
-- Camera object of the same type with ROI calibration data
-"""
-function extract_camera_roi(camera::IdealCamera{T}, row_range, col_range) where T
-    return IdealCamera(
-        camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
-        camera.pixel_edges_y[row_range]   # pixel_edges_y (positional)
-    )
-end
-
-function extract_camera_roi(camera::SCMOSCamera{T}, row_range, col_range) where T
-    # Handle both scalar and per-pixel calibration parameters
-    # SMLMData 0.6+: SCMOSCamera calibration arrays use (ny, nx) = (rows, cols) convention
-    # This matches Julia's standard image indexing: array[row, col]
-    offset = camera.offset isa AbstractArray ? camera.offset[row_range[1:end-1], col_range[1:end-1]] : camera.offset
-    gain = camera.gain isa AbstractArray ? camera.gain[row_range[1:end-1], col_range[1:end-1]] : camera.gain
-    readnoise = camera.readnoise isa AbstractArray ? camera.readnoise[row_range[1:end-1], col_range[1:end-1]] : camera.readnoise
-    qe = camera.qe isa AbstractArray ? camera.qe[row_range[1:end-1], col_range[1:end-1]] : camera.qe
-
-    return SCMOSCamera(
-        camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
-        camera.pixel_edges_y[row_range],  # pixel_edges_y (positional)
-        readnoise = readnoise,
-        offset = offset,
-        gain = gain,
-        qe = qe
-    )
 end
 
 """
