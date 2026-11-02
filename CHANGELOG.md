@@ -16,6 +16,9 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   the threshold at that photon count; a pixel-corner spot needs about 1.1× more. The
   standard and sCMOS paths use their own kernels. Among 62,682 clean in-focus lab spots,
   half are detected near 487 fitted photons at `min_photons = 500`, versus 566 before.
+  The same setting finds more boxes: on 2000 lab frames at `min_photons = 500`, 6.5%
+  more with an IdealCamera and 4.1% more with an SCMOSCamera (10.3% and 6.7% at 1000);
+  every box 0.3.4 found on the IdealCamera path is still found.
 - Images must match their camera's (rows, columns), or raise `DimensionMismatch`.
   A 192 × 192 crop passed with its full 256 × 256 camera previously returned 24,347
   boxes with coordinates silently wrong by 64 pixels.
@@ -51,6 +54,11 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 - Removed unused internal `find_best_gpu`, `select_backend`, `wait_for_gpu_memory`,
   and `estimate_gpu_memory` helpers and the discarded per-box camera ROI construction.
   The per-frame memory estimator is unchanged.
+
+### Known issues
+- With CUDA.jl 6.5.0, freed pool memory is still not returned to the driver (see 0.3.4):
+  after a 256-frame call a process kept 128-160 MiB more than before it. CUDA.jl 6.4.2
+  returns all of it.
 
 ## [0.3.4] - 2026-11-02
 
