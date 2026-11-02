@@ -21,9 +21,10 @@ using Test, SMLMBoxer, CUDA
 
     # Code 719 is CUDA_ERROR_LAUNCH_FAILED in CUDA 5.11 and 6.x.
     const fault = CUDA.CuError(typeof(CUDA.ERROR_OUT_OF_MEMORY)(719))
+    const injected_fault = Ref{Exception}(fault)
     @eval SMLMBoxer function convolve(imagestack::AbstractArray{<:Real},
             kernel::Matrix{Float32}; use_gpu=false)
-        use_gpu && throw($fault)
+        use_gpu && throw($(injected_fault)[])
         weights = reshape(kernel, size(kernel)..., 1, 1)
         p = size(kernel, 1) ÷ 2
         return NNlib.conv(imagestack, weights; pad=(p, p, p, p), stride=1)
@@ -60,6 +61,28 @@ using Test, SMLMBoxer, CUDA
 
     check_auto(image, reference, kw)
     check_gpu(image, kw)
+
+    function check_interrupt(image, kw)
+        interrupt = InterruptException()
+        injected_fault[] = interrupt
+        for backend in (:auto, :gpu)
+            caught = nothing
+            trace = nothing
+            elapsed = @elapsed try
+                getboxes(image; backend, auto_timeout=60.0, gpu_timeout=60.0, kw...)
+            catch e
+                caught = e
+                trace = catch_backtrace()
+            end
+            original = caught === interrupt
+            from_convolve = trace !== nothing &&
+                any(frame -> frame.func == :convolve, stacktrace(trace))
+            println("interrupt|backend=", backend, "|original=", original,
+                "|trace=", from_convolve, "|fast=", elapsed < 20)
+        end
+    end
+
+    check_interrupt(image, kw)
     """
     cmd = `$(Base.julia_cmd()) --startup-file=no
            --project=$(Base.active_project()) -e $script`
@@ -72,4 +95,6 @@ using Test, SMLMBoxer, CUDA
     @test "auto|backend=cpu|same=true" in lines
     @test "auto|fast=true|warning=true" in lines
     @test "gpu|original=true|trace=true|fast=true" in lines
+    @test "interrupt|backend=auto|original=true|trace=true|fast=true" in lines
+    @test "interrupt|backend=gpu|original=true|trace=true|fast=true" in lines
 end

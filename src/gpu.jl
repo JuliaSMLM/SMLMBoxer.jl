@@ -30,7 +30,7 @@ is_gpu_query_error(e) = e isa CUDA.NVML.NVMLError || e isa CUDA.CuError
 True only for GPU memory errors and an unavailable device, including context-creation
 races. GPU memory errors and an unavailable device are retried until the timeout;
 any other GPU failure falls back to the CPU at once under `:auto`, or is raised at once
-under `:gpu`.
+under `:gpu`; an interrupt (Ctrl-C) always stops the call.
 """
 is_gpu_resource_error(e) = e isa CUDA.OutOfGPUMemoryError ||
     (e isa CUDA.CuError &&
@@ -53,13 +53,23 @@ function reclaim_failed_gpu_attempt()
 end
 
 """
-    frame_fits_some_gpu(frame_bytes, totals) -> Bool
+    GPU_CONTEXT_RESERVE
 
-Whether any visible device's total memory can hold one frame. `frame_bytes` includes
-the same safety margin used by polling; `totals` contains device capacities in bytes.
+Bytes reserved for a CUDA context and the driver. The lab RTX 4090 reported 878.812 MiB
+in use at `start` in dev/output/drop-cudnn/pool-diag2-branch.log; round up to 1 GiB.
+"""
+const GPU_CONTEXT_RESERVE = 1024^3
+
+"""
+    frame_fits_some_gpu(frame_bytes, totals, reserve) -> Bool
+
+Whether any visible device can free enough memory for one frame after reserving `reserve`
+bytes for its context and driver. `frame_bytes` includes the same safety margin used by
+polling; `totals` contains device capacities in bytes.
 An empty device list cannot hold a frame.
 """
-frame_fits_some_gpu(frame_bytes, totals) = any(total -> frame_bytes <= total, totals)
+frame_fits_some_gpu(frame_bytes, totals, reserve) =
+    any(total -> total >= reserve && frame_bytes <= total - reserve, totals)
 
 """
     nvml_device(i) -> CUDA.NVML.Device
