@@ -50,6 +50,30 @@ using Test, SMLMBoxer, SMLMData
     @test roi_batch.camera isa IdealCamera
 end
 
+@testset "Image-sized camera and far-corner ROI" begin
+    image = zeros(Float32, 40, 50)
+    image[end, end] = 1000f0
+    # Exercise both the default camera and camera-ROI extraction during box cutting.
+    for camera in (nothing, IdealCamera(50, 40, 1f0))
+        roi_batch, _ = getboxes(image, camera;
+            boxsize = 7, minval = 1.0, backend = :cpu)
+
+        @test length(roi_batch.camera.pixel_edges_x) == 51
+        @test length(roi_batch.camera.pixel_edges_y) == 41
+        @test roi_batch.camera.pixel_edges_x == Float32.(0:50)
+        @test roi_batch.camera.pixel_edges_y == Float32.(0:40)
+        @test length(roi_batch) == 1
+        @test roi_batch.x_corners == [44]
+        @test roi_batch.y_corners == [34]
+        @test roi_batch.data[:, :, 1] == image[34:40, 44:50]
+
+        # The final ROI needs the last edge at n + 1, including after the size correction.
+        roi_camera = SMLMBoxer.extract_camera_roi(roi_batch.camera, 34:41, 44:51)
+        @test roi_camera.pixel_edges_x == Float32.(43:50)
+        @test roi_camera.pixel_edges_y == Float32.(33:40)
+    end
+end
+
 @testset "Overlap removal" begin
     # Test image with two close bright peaks
     image = zeros(Float32, 100, 100)
@@ -118,8 +142,8 @@ end
     # Create an IdealCamera
     pixel_size = 0.1f0  # microns
     camera = IdealCamera(
-        1:101,  # pixel range x (need 101 edges for 100 pixels)
-        1:101,  # pixel range y
+        1:100,  # pixel centers x
+        1:100,  # pixel centers y
         pixel_size  # pixel size
     )
 
@@ -186,8 +210,8 @@ end
     # Create camera
     pixel_size = 0.1f0  # 100nm pixels
     camera = IdealCamera(
-        1:101,
-        1:101,
+        1:100,
+        1:100,
         pixel_size
     )
 
@@ -230,7 +254,7 @@ end
     image = zeros(Float32, 100, 100)
     image[50, 50] = 1000.0
 
-    camera = IdealCamera(1:101, 1:101, 0.1f0)
+    camera = IdealCamera(1:100, 1:100, 0.1f0)
 
     # PSF-aware config
     config_psf = BoxerConfig(

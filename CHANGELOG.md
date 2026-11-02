@@ -17,6 +17,14 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   current CUDA and AMDGPU environments resolve 0.10.
 
 ### Fixed
+- With an IdealCamera or no camera, the DoG filter treated the outside of the image as
+  zero, so a background produced false boxes along the image edges (on simulated frames
+  with a 10 photon/px background, 72% of boxes were at the edge). Edge pixels are now
+  filtered with the in-bounds part of each Gaussian, as the sCMOS path already did;
+  pixels a half kernel or more from the edge are filtered exactly as before. Boxes
+  change only near the edges.
+- Without a camera, the ROIBatch's default IdealCamera was one pixel larger than the
+  image on each axis. Box positions were and are unchanged.
 - Overlap removal now applies to every frame of a stack; previously it applied only to
   frame 1 (#19). Overlap removal no longer allocates per pair of boxes, so running it on
   every frame costs about as much as the old frame-1-only pass did per frame.
