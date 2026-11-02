@@ -56,7 +56,8 @@ dependency; SMLMBoxer does not use Reactant or need setup for it.
    and low utilization. When NVML cannot report a GPU's memory, ask CUDA for it
 3. Acquire GPU context and run processing
 4. On GPU memory errors or an unavailable device (including context-creation races):
-   try to release memory via `GC.gc() + CUDA.reclaim()`. Halve the failed batch's frame
+   try to release memory via `GC.gc(false)`, `CUDA.reclaim()` and
+   `release_gpu_memory()`. Halve the failed batch's frame
    cap and retry immediately; only after a single-frame failure re-poll with the
    remaining timeout
 5. On any other GPU failure: try to release memory; under `:auto`, warn and use the CPU
@@ -64,7 +65,6 @@ dependency; SMLMBoxer does not use Reactant or need setup for it.
 6. On timeout: `:auto` falls back to CPU, `:gpu` errors with the failed batch size and
    memory need
 7. On success: release explicitly freed GPU memory without full garbage collection
-   (see the CUDA.jl 6.5.x caveat below)
 
 **Backend modes:**
 - `:cpu` - Always CPU, no GPU involvement
@@ -157,7 +157,7 @@ After clamping, keep the brightest filtered detection per corner and frame.
 - `psf_sigma::Real` - PSF sigma in microns (requires camera for pixel size conversion)
 - `min_photons::Real` - Photon threshold (default: 500.0). A noise-free,
   pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
-  count; at a pixel corner it needs about 1.1× more photons.
+  count. See `BoxerConfig` for subpixel-position effects.
 
 *Advanced Interface (Direct Control):*
 - `sigma_small::Real` - Small Gaussian sigma in pixels (default: 1.0)
@@ -165,7 +165,7 @@ After clamping, keep the brightest filtered detection per corner and frame.
 - `minval::Real` - DoG intensity threshold (default: 0.0)
 
 *Other Parameters:*
-- `boxsize::Int` - ROI size in pixels, odd or even, at least 1 (default: 7)
+- `boxsize::Int` - ROI size in pixels, odd or even (default: 7)
 - `overlap::Real` - pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
   pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
@@ -367,8 +367,6 @@ These functions are documented but not part of the public API. Use at your own r
 **Helper Functions:**
 - `get_pixel_size(camera)` - Extract pixel size from camera
 - `photons_to_dog_threshold(min_photons, psf_sigma)` - Convert photon threshold to DoG threshold
-- `pixels_to_microns(pixel_coords, camera)` - Coordinate conversion
-- `extract_camera_roi(camera, row_range, col_range)` - Extract camera calibration for ROI
 - `get_variance_map(camera, imagesize)` - Compute variance map from camera
 - `reshape_for_flux(arr)` - Reshape array for NNlib convolution
 
@@ -377,8 +375,8 @@ These functions are documented but not part of the public API. Use at your own r
 ### Detection Pipeline
 1. **Filtering**: Apply DoG filter (standard or variance-weighted based on camera type)
 2. **Local Maxima**: Find peaks above threshold using max pooling
-3. **Overlap Removal**: Only maxima sharing a max-pool window compete; the dimmer
-   goes, with ties keeping the earlier detection
+3. **Overlap Removal**: Maxima sharing a max-pool window have equal intensities;
+   the earlier detection is kept
 4. **Box Extraction**: Clamp corners and retain one box per corner and frame,
    keeping the brightest filtered detection
 5. **ROIBatch Construction**: Package results with camera calibration
@@ -406,8 +404,8 @@ windows, each with half-width `ceil(3 * sigma)`. Pixel integrals use numerical
 quadrature accurate to 1e-4 relative; no empirical DoG factor is used.
 At PSF sigma 1.35 pixels, the response is about 0.547 (standard) or 0.581 (sCMOS)
 times `N / (2π * (sqrt(2) * 1.35)^2)`. A noise-free spot of `min_photons` photons
-centered on a pixel just reaches the threshold; at a pixel corner it needs about
-1.1× more. Noise and varying calibration affect real detections.
+centered on a pixel just reaches the threshold. See `BoxerConfig` for
+subpixel-position effects. Noise and varying calibration affect real detections.
 
 ### Variance-Weighted Convolution
 For sCMOS cameras with readnoise map:
@@ -435,12 +433,12 @@ Implements optimal inverse variance weighting for spatially-varying noise.
   cleanup errors cannot mask the original error or prevent CPU fallback.
 - **Memory Pool Release**: Explicitly frees owned GPU arrays within each batch, including
   on errors. Successful calls synchronize, purge caches and trim the pool without full
-  garbage collection on CUDA.jl 6; CUDA.jl 5 uses its GC-free `CUDA.reclaim()`. Failed
-  attempts still use `GC.gc(false) + CUDA.reclaim()`. Release after a short call takes
-  0.013 ms on the RTX 4090 under CUDA.jl 6.5.0, which retains freed pool memory until
-  process exit (see the changelog's known issue). Under CUDA.jl 6.4.2, release returns
-  memory to the driver: about 43 ms per 2 GiB released, compared with 200 ms for
-  `CUDA.reclaim()` on the same allocation workload.
+  garbage collection from CUDA.jl 6.2, when `RECLAIM_PURGE` became available and the
+  default `reclaim()` started running a full GC. CUDA.jl 5, 6.0 and 6.1 use their GC-free
+  `CUDA.reclaim()`. Failed attempts use `GC.gc(false)`, `CUDA.reclaim()` and
+  `release_gpu_memory()`. Release after a short call takes about 0.02 ms on the
+  RTX 4090; returning 2 GiB to the driver takes about 42 ms. On CUDA.jl 5.9 to
+  6.5.0, the process is back within 64 MiB of its baseline after a call.
 - **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting
 - **Typical Speedup**: A warmed-up 256×256×10 GPU call takes about 0.75 ms in 0.4.0,

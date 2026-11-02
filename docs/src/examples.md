@@ -228,11 +228,10 @@ down from about 57 ms in 0.3.4 (medians of 0.73–0.84 ms across CUDA.jl 6.4.2 a
 either camera path and either one or 32 CPU threads on the AMD Ryzen 9 5950X.
 
 GPU arrays are freed as soon as each batch is done, and the release after a successful
-call no longer runs a full garbage collection. It takes 0.013 ms after a short call
-under CUDA.jl 6.5.0, which still retains freed pool memory until process exit (see the
-changelog's known issue). Under CUDA.jl 6.4.2, release returns memory to the driver:
-about 43 ms per 2 GiB released, compared with 200 ms for `CUDA.reclaim()` on the same
-allocation workload.
+call no longer runs a full garbage collection. Release after a short call takes
+about 0.02 ms on the RTX 4090; returning 2 GiB to the driver takes
+about 42 ms. On CUDA.jl 5.9 to 6.5.0, the process is back within 64 MiB of
+its baseline after a call.
 
 ### Large Dataset Processing
 

@@ -61,16 +61,17 @@ end
     release_gpu_memory()
 
 Return explicitly freed GPU allocations to the driver after a successful call, without
-running garbage collection. CUDA.jl 6 requires device synchronization before purging
-caches, then another synchronization before trimming the pool. CUDA.jl 5 has no
-`RECLAIM_PURGE`; its default `reclaim()` synchronizes and trims without a full GC.
-CUDA.jl 6.5.x may retain pool memory despite this release (see CHANGELOG's known issue).
+running garbage collection. `RECLAIM_PURGE` is available from CUDA.jl 6.2, when the
+default `reclaim()` started running a full GC; purge caches between device synchronizations,
+then trim the pool. Synchronization must be blocking because CUDA.jl 6.5.0's event-based
+wait on driver 12.5 or later leaves asynchronously freed blocks unavailable to trimming.
+On CUDA.jl 5, 6.0 and 6.1, the default `reclaim()` has no full GC and is used as is.
 """
 function release_gpu_memory()
     if isdefined(CUDA, :RECLAIM_PURGE)
-        CUDA.device_synchronize()
+        CUDA.device_synchronize(; blocking=true)
         CUDA.reclaim(CUDA.RECLAIM_PURGE)
-        CUDA.device_synchronize()
+        CUDA.device_synchronize(; blocking=true)
         CUDA.trim(CUDA.memory_pool(CUDA.device()))
     else
         CUDA.reclaim()
@@ -88,6 +89,7 @@ function reclaim_failed_gpu_attempt()
     try
         GC.gc(false)
         CUDA.reclaim()
+        release_gpu_memory()
     catch
         # Cleanup must neither replace the original error nor prevent CPU fallback.
     end

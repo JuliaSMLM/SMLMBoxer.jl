@@ -116,8 +116,10 @@ end
    removeoverlap(coords, args)
 
 Remove maxima sharing a max-pool window, using Chebyshev distance < cld(k, 2),
-where k = max(3, floor(Int, boxsize - overlap)). Compare in index order, dropping the
-dimmer maximum; ties drop the later one. Keep intensities for clamped-corner selection.
+where k = max(3, floor(Int, boxsize - overlap)). Maxima from the filter that share a
+window have equal intensities, so the earlier detection is kept. For other input, the
+dimmer of two maxima is dropped and ties drop the later one. Keep intensities for
+clamped-corner selection.
 
 # Arguments
 - `coords`: List of coords

@@ -28,12 +28,7 @@ using Test, SMLMBoxer, CUDA
         @test info.backend == :gpu
         @test length(roi) == 256
         println("release|camera=", typeof(camera), "|before=", before, "|after=", after)
-        if v"6.5" <= pkgversion(CUDA) < v"6.6"
-            # CHANGELOG known issue: CUDA.jl 6.5.x retains freed pool memory.
-            @test_broken after <= before + 64 * 1024^2
-        else
-            @test after <= before + 64 * 1024^2
-        end
+        @test after <= before + 64 * 1024^2
     end
 
     camera = only(ARGS) == "scmos" ?

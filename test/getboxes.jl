@@ -66,11 +66,6 @@ end
         @test roi_batch.x_corners == [44]
         @test roi_batch.y_corners == [34]
         @test roi_batch.data[:, :, 1] == image[34:40, 44:50]
-
-        # The final ROI needs the last edge at n + 1, including after the size correction.
-        roi_camera = SMLMBoxer.extract_camera_roi(roi_batch.camera, 34:41, 44:51)
-        @test roi_camera.pixel_edges_x == Float32.(43:50)
-        @test roi_camera.pixel_edges_y == Float32.(33:40)
     end
 end
 

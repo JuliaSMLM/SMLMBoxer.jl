@@ -77,11 +77,6 @@ Pkg.add(["SMLMBoxer", "Reactant"])
 using SMLMBoxer, Reactant
 ```
 
-With CUDA.jl 6.5.0, `CUDA.reclaim()` no longer returns freed pool memory to the driver.
-After GPU `getboxes`, the process keeps its peak GPU memory reserved until it exits.
-Later calls in that process reuse it; other processes cannot use it. CUDA.jl 6.4 and
-earlier release it.
-
 GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-process environments. See the [API docs](https://JuliaSMLM.github.io/SMLMBoxer.jl/dev/api/) for details.
 
 ## Detection Modes
@@ -119,16 +114,16 @@ roi_batch, info = getboxes(imagestack, camera, BoxerConfig(
 A kwargs interface is also available for one-off calls: `getboxes(imagestack, camera; psf_sigma=0.13, min_photons=500.0)`.
 
 `min_photons` sets the filtered peak of a noise-free, pixel-integrated Gaussian spot:
-a spot with that many photons centered on a pixel just reaches the threshold. A spot
-centered on a pixel corner needs about 1.1× more photons. The threshold uses the actual
+a spot with that many photons centered on a pixel just reaches the threshold. See
+`BoxerConfig` for subpixel-position effects. The threshold uses the actual
 filter kernels (uniform variance for sCMOS) and effective gain, so the camera paths
 can give slightly different thresholds. Noise and spatially varying calibration affect
 which real spots pass it.
 
 `overlap` sets the local-maximum window `k = max(3, floor(Int, boxsize - overlap))`.
 Detections are at least `cld(k, 2)` pixels apart along either axis; raising `overlap`
-allows closer neighbors. Within a shared window, the dimmer maximum is removed;
-ties keep the earlier detection.
+allows closer neighbors. Detections sharing a window have equal intensities;
+the earlier detection is kept.
 
 ## Output Format
 
@@ -199,15 +194,14 @@ about 57 ms in 0.3.4 (medians of 0.73–0.84 ms across CUDA.jl 6.4.2 and 6.5.0).
 The GPU wins from one frame at every size tested (128, 256 and 512 px), with either
 camera path and either one or 32 CPU threads on this machine.
 
-0.3.4 spent about 60 ms per GPU call in a full garbage collection inside
-`CUDA.reclaim()`. 0.4.0 frees its GPU arrays as soon as each batch is done and releases
+Under CUDA.jl 6.2 and later, 0.3.4 spent about 60 ms per GPU call in a full garbage
+collection inside `CUDA.reclaim()`. 0.4.0 frees its GPU arrays as soon as each batch is done and releases
 memory without a full garbage collection. On 500 frames at 256×256, IdealCamera GPU
 throughput increases from 5,329 to 13,805 images/s.
 
-The release after a short call takes 0.013 ms under CUDA.jl 6.5.0, which retains freed
-pool memory until process exit (see the known issue above). Under CUDA.jl 6.4.2,
-release returns memory to the driver: about 43 ms per 2 GiB released, compared with
-200 ms for `CUDA.reclaim()` on the same allocation workload.
+Release after a short call takes about 0.02 ms on the RTX 4090; returning
+2 GiB to the driver takes about 42 ms. On CUDA.jl 5.9 to 6.5.0, the process is
+back within 64 MiB of its baseline after a call.
 
 Standard DoG uses NNlib on CPU and a KernelAbstractions kernel on GPU;
 variance-weighted sCMOS uses KernelAbstractions custom kernels on both. Run

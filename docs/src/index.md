@@ -60,11 +60,6 @@ Pkg.add(["SMLMBoxer", "Reactant"])
 using SMLMBoxer, Reactant
 ```
 
-With CUDA.jl 6.5.0, `CUDA.reclaim()` no longer returns freed pool memory to the driver.
-After GPU `getboxes`, the process keeps its peak GPU memory reserved until it exits.
-Later calls in that process reuse it; other processes cannot use it. CUDA.jl 6.4 and
-earlier release it.
-
 ## Quick Start
 
 ### Basic Detection with IdealCamera
@@ -133,8 +128,8 @@ The `getboxes()` function implements a multi-stage blob detection pipeline:
 
 3. **Local Maxima Detection**: Identifies peaks in the filtered image above the threshold
 
-4. **Overlap Removal**: Removes the dimmer maximum only within a shared max-pool
-   window; ties keep the earlier detection. With
+4. **Overlap Removal**: Detections sharing a max-pool window have equal intensities;
+   the earlier detection is kept. With
    `k = max(3, floor(Int, boxsize - overlap))`, detections are at least `cld(k, 2)`
    pixels apart along either axis.
 
@@ -161,8 +156,8 @@ This automatically calculates:
 
 The threshold is the actual filter's peak response to a noise-free, pixel-integrated
 Gaussian with `min_photons` photons centered on a pixel, times effective gain.
-A spot centered on a pixel corner needs about 1.1× more photons. The sCMOS reference
-uses uniform variance and its own Gaussian windows; its threshold can differ slightly
+See [`BoxerConfig`](@ref) for subpixel-position effects. The sCMOS reference uses
+uniform variance and its own Gaussian windows; its threshold can differ slightly
 from the standard path. Noise and varying calibration affect real detections.
 
 ## Advanced Interface
