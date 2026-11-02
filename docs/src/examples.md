@@ -183,7 +183,12 @@ println("Detections: $(best.n_detected)")
 
 ## GPU Acceleration
 
-Leverage GPU acceleration for processing large datasets.
+Use GPU acceleration for processing large datasets. See [GPU Support](@ref) on Home
+for supported hardware.
+
+To use `using CUDA` in your own code, run `Pkg.add("CUDA")` in your environment;
+SMLMBoxer's dependency does not expose it there. `getboxes` itself needs nothing
+beyond `Pkg.add("SMLMBoxer")`.
 
 ### Basic GPU Usage
 
@@ -211,6 +216,14 @@ end
 @time (roi_batch_gpu, _) = getboxes(imagestack, camera;
     psf_sigma = 0.13, min_photons = 500.0, backend = :auto)
 ```
+
+### Short stacks
+
+The fixed cost per GPU call was about 60 ms on an RTX 4090, mostly releasing the GPU
+memory pool after the call, whatever the stack size. GPU throughput therefore depends
+on stack length. At 256×256 with an IdealCamera, the CPU and GPU break even at about
+10 frames on one CPU thread and about 50 frames on 32 threads; below that use
+`backend = :cpu` if speed matters. 0.3.3 has the same fixed cost.
 
 ### Large Dataset Processing
 

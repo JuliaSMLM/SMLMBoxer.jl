@@ -27,9 +27,11 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   on the RTX 4090 a `getboxes` call at the default `min_photons` takes within 5% of
   0.3.3's time per frame, and less under KernelAbstractions 0.10 (#20).
 - KernelAbstractions compat is `0.9.38 - 0.10`: Reactant environments resolve 0.9, while
-  current CUDA and AMDGPU environments resolve 0.10. Under 0.10 the CPU backend is
-  OpenCL (POCL): the sCMOS filter on the CPU then rounds slightly differently (up to 4
-  boxes per 100,000 change at a low threshold) and runs about 25% slower than under 0.9.
+  current CUDA and AMDGPU environments resolve 0.10. GPU runs stay NVIDIA only; AMDGPU
+  can sit in the same environment, but SMLMBoxer does not use it. Under 0.10 the CPU
+  backend is OpenCL (POCL): the sCMOS filter on the CPU then rounds slightly differently
+  (up to 4 boxes per 100,000 change at a low threshold) and runs about 25% slower than
+  under 0.9.
 
 ### Fixed
 - A repeatable GPU out-of-memory error retried the same batch until the timeout, forever
@@ -61,6 +63,11 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 - Even local-maximum windows, such as boxsize 7 with overlap 3, no longer warn that
   cuDNN does not support asymmetric padding. The GPU window now matches the CPU's
   asymmetric padding exactly.
+- Documentation: the README and docs now state which hardware runs on the GPU, how
+  SMLMBoxer sits beside Reactant, and the CUDA.jl 6.5.0 memory behavior. The README speed
+  table is re-measured on the RTX 4090 because its GPU figures were reachable only on
+  long stacks and its IdealCamera CPU figures were far too low; it now gives the fixed
+  per-call GPU cost.
 
 ### Known issues
 - With CUDA.jl 6.5.0, which current KernelAbstractions 0.10 environments resolve,
