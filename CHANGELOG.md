@@ -11,39 +11,40 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 ## [0.4.1]
 
 ### Fixed
-- GPU finite-pixel checks now scan into one explicitly freed four-byte device flag,
-  including on errors, instead of leaving GC-managed reduction buffers alive.
-  This restores GPU pool trimming without a GC after Float32 detection calls.
-- PSF-aware sCMOS detection now converts each ADU pixel to photons with
-  `(adu - offset) * gain / qe`, uses variance `(readnoise / qe)^2` in photons²,
-  and applies the photon threshold with effective gain 1. ROI pixels still come
-  from the caller's ADU image; direct sigma/minval parameters retain ADU filtering.
-  With the lab gain map (0.396–0.504 e⁻/ADU), the old `min_photons=500` threshold
-  ranged from 428 to 545 photons; 4.3% of pixels differed by more than 5%.
-  Per-pixel photon detection swaps about 7% of boxes on 2000 lab frames, changes
-  counts by -0.17% to +0.10%, and finds net more clean in-focus spots above the
-  threshold in three of four runs.
-- sCMOS photon conversion now rejects non-finite scalar or mapped offset values,
-  naming the field and affected pixel count. The direct interface does not use offset.
-- Invalid image pixels now return a marker through batch processing, release GPU
-  memory normally, then raise outside the GPU catch. GPU-origin ArgumentError
-  failures again reclaim memory and fall back to CPU under `:auto`.
-- BoxerConfig again converts keyword values before validating them, including
-  `boxsize=9.0` and Int32 numeric fields accepted by the former @kwdef constructor.
-- sCMOS cameras with zero, negative or non-finite readnoise, gain or qe now raise
-  `ArgumentError` naming the field and affected pixel count. A noise-free readout
-  should use an IdealCamera with the image in photons.
-- Float images containing NaN/Inf now raise `ArgumentError` with the count and first
-  (row, col, frame), including under `:auto`, instead of losing or shifting detections.
-  Integer images skip the check; GPU batches are checked on device.
-- `min_photons` without `psf_sigma` now raises `ArgumentError` instead of being ignored.
-  Its keyword default is `nothing`; with `psf_sigma`, omission stores 500.0 in BoxerConfig.
-- Images smaller than `boxsize` and unsupported dimensions now raise `ArgumentError`
-  before filtering. Zero-frame stacks return an empty ROIBatch and BoxesInfo.
-- Invalid sigmas, thresholds, box sizes, overlap, backends and timeouts now raise
-  `ArgumentError` naming the field and value through shared keyword validation.
-- PSF-aware calls with rectangular or unequal camera pixels now raise `ArgumentError`
-  (relative tolerance 1e-4). Such cameras can still use direct sigmas in pixels.
+- With an `SCMOSCamera`, PSF-aware detection (`psf_sigma` with `min_photons`) now works in
+  photons per pixel: each pixel becomes `(adu - offset) * gain / qe`, weighted by the
+  variance `(readnoise / qe)^2`, and the threshold needs no gain conversion. 0.4.0 converted
+  `min_photons` with the camera's mean QE / gain, so with a gain map the threshold in photons
+  varied by pixel: on the lab's calibration (gain 0.396-0.504 e-/ADU), `min_photons = 500`
+  meant 428 to 545 photons, more than 5% off at 4.3% of pixels. On 2000 lab frames the fix
+  changes the box count by -0.17% to +0.10% and replaces about 7% of boxes, mostly noise;
+  clean in-focus spots above the threshold rise by about 0.3-0.5% in three of four runs and
+  fall by 0.06% in one. Boxes are still cut from the ADU image. The direct interface
+  (`sigma_small`, `sigma_large`, `minval`) still filters the image as given. On this path the
+  offset must be finite.
+- An sCMOS readnoise, gain or QE that is zero, negative or not finite (scalar, or any pixel of
+  a map) raises `ArgumentError` naming the field and the number of pixels. A zero readnoise
+  previously made the filter return NaN: no boxes for a scalar 0, and none within the large
+  Gaussian's window of a zero pixel. For a noise-free readout, use an IdealCamera with the
+  image in photons.
+- A NaN or Inf pixel in a float image raises `ArgumentError` with the count and the first
+  (row, col, frame), also under `:auto`; it previously removed or shifted detections nearby.
+  Integer images skip the check. On the GPU the check runs on the device: about 0.4 ms per
+  1000 frames of 256 x 256 (0.5% of the call), with nothing left in the memory pool.
+- `min_photons` without `psf_sigma` raises `ArgumentError`; it was silently ignored, leaving a
+  threshold of 0 that made every local maximum a box. Its keyword default is now `nothing`;
+  with `psf_sigma` and no `min_photons`, 500 is used and stored in `BoxerConfig`.
+- An image smaller than `boxsize` in either dimension, or an array of more than 3 dimensions,
+  raises `ArgumentError` before filtering (previously `BoundsError` or `ErrorException`). A
+  stack of zero frames returns an empty ROIBatch instead of a `DivideError`.
+- `BoxerConfig` and `getboxes` validate their parameters and raise `ArgumentError` naming the
+  field: sigmas must be finite with `0 < sigma_small < sigma_large`, `psf_sigma` and
+  `min_photons` finite and positive, `minval` and `overlap` finite (`overlap >= 0`),
+  `boxsize >= 1`, `backend` one of `:cpu`, `:gpu`, `:auto`, and timeouts `>= 0`. Swapped
+  sigmas previously returned rings of false boxes, and `psf_sigma = 0` returned no boxes.
+- `psf_sigma` with a camera whose pixels are not square, or not all the same size, raises
+  `ArgumentError` (relative tolerance 1e-4); the PSF width was converted with the x pixel size
+  only. Such cameras can use `sigma_small` and `sigma_large` in pixels.
 
 ## [0.4.0] - 2026-11-02
 

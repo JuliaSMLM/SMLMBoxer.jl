@@ -81,15 +81,10 @@ println("First detection at ($(first_roi.corner[1]), $(first_roi.corner[2]))")
 
 This example demonstrates variance-weighted detection for sCMOS cameras with spatially-varying noise.
 
-With an `SCMOSCamera`, the PSF-aware path (`psf_sigma`/`min_photons`) detects in
-photons per pixel: `(adu - offset) * gain / qe`, with variance `(readnoise / qe)^2`
-in photons². Offset, gain and QE may each be scalar or maps; offset must be finite
-when this conversion is used. The threshold uses effective gain 1 and the
-variance-weighted reference response to `min_photons` photons (uniform variance).
-Conversion runs on an owned batch copy on its device. ROI pixels are still cut
-from the caller's ADU image and retain the supplied camera and coordinate convention.
-The direct interface (`sigma_small`, `sigma_large`, `minval`) filters the image as
-given with `(readnoise / gain)^2` in ADU²; `minval` stays in those image units.
+With an `SCMOSCamera`, the PSF-aware path (`psf_sigma`/`min_photons`) detects in photons per
+pixel, `(adu - offset) * gain / qe`, weighting each pixel by `1 / (readnoise / qe)^2`; boxes are
+still cut from the ADU image. The direct interface (`sigma_small`, `sigma_large`, `minval`)
+filters the image as given, weighted by `1 / (readnoise / gain)^2` in ADU².
 
 The image dimensions must match the camera's pixel edges.
 
