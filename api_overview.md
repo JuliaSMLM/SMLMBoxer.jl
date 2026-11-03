@@ -30,7 +30,8 @@ Specify physical PSF parameters (in microns), automatically converted to optimal
 ### Variance-Weighted Filtering (sCMOS)
 When `SCMOSCamera` is provided, implements SMITE-style inverse variance weighting:
 - Each pixel weighted by `gaussian_kernel / variance`, with
-  `variance = (readnoise / gain)^2` in ADU² (gain in e⁻/ADU)
+  `variance = (readnoise / qe)^2` in photons² for PSF-aware detection,
+  or `(readnoise / gain)^2` in ADU² for direct parameters (gain in e⁻/ADU)
 - Low-noise pixels: high weight (strong detection influence)
 - High-noise pixels: low weight (reduced false positives)
 - GPU-accelerated via KernelAbstractions.jl (device-agnostic kernels)
@@ -98,7 +99,19 @@ count and first `(row, col, frame)`, including under `:auto`; integers skip the 
 strictly positive, including maps. Errors name the field and affected pixel count.
 A noise-free readout should use `IdealCamera` with the image in photons.
 
-Use the `BoxerConfig` keyword constructor. `min_photons` defaults to `nothing` and
+With an `SCMOSCamera`, the PSF-aware path (`psf_sigma`/`min_photons`) detects in
+photons per pixel: `(adu - offset) * gain / qe`, with variance `(readnoise / qe)^2`
+in photons². Offset, gain and QE may each be scalar or maps; offset must be finite
+when this conversion is used. The threshold uses effective gain 1 and the
+variance-weighted reference response to `min_photons` photons (uniform variance).
+Conversion runs on an owned batch copy on its device. ROI pixels are still cut
+from the caller's ADU image and retain the supplied camera and coordinate convention.
+The direct interface (`sigma_small`, `sigma_large`, `minval`) filters the image as
+given with `(readnoise / gain)^2` in ADU²; `minval` stays in those image units.
+
+
+Use the `BoxerConfig` keyword constructor. It converts values to field types before
+validation, including `boxsize=9.0` and `Int32` numeric fields. `min_photons` defaults to `nothing` and
 requires `psf_sigma`; when `psf_sigma` is given and `min_photons` omitted, the config
 stores **500.0**. Both must be finite and > 0. PSF-aware detection requires a camera
 whose pixels are all square and uniformly sized (relative tolerance 1e-4).
@@ -238,7 +251,9 @@ Use this when processing very large datasets to determine optimal chunk size bef
 **Returns:** Maximum recommended number of frames to load at once
 
 **Memory Model:**
-The processing pipeline requires approximately 6× the raw image size:
+This helper uses the standard DoG estimate of 6× the raw image size.
+`getboxes` budgets 8× for direct sCMOS and 9× for PSF-aware sCMOS, including an
+owned photon copy, and batches the call using that estimate:
 - Input imagestack
 - Filtered stack (DoG output)
 - Local maxima detection intermediates
@@ -420,7 +435,7 @@ sigma_large = 2.0 × psf_sigma_pixels  # Background suppression
 # P[i,j] is the integral over pixel (i,j) of a unit-photon Gaussian centered on a pixel.
 # Ks, Kl are the actual normalized small and large Gaussian kernels of this path.
 minval = min_photons * effective_gain * (sum(Ks .* P_small) - sum(Kl .* P_large))
-# effective_gain: 1 for IdealCamera (photons); QE / gain for SCMOSCamera (ADU)
+# effective_gain: 1; PSF-aware sCMOS images are converted to photons per pixel first
 ```
 
 The standard kernels come from `dog_kernel_pair`, with common odd size at least
@@ -435,8 +450,10 @@ subpixel-position effects. Noise and varying calibration affect real detections.
 ### Variance-Weighted Convolution
 For sCMOS cameras with readnoise map:
 ```julia
-# Calibration is converted per pixel when readnoise or gain is a map:
-variance = (readnoise ./ gain).^2  # ADU²
+# PSF-aware sCMOS (each calibration may be scalar or a map):
+input = (adu .- offset) .* gain ./ qe
+variance = (readnoise ./ qe).^2  # photons²
+# Direct parameters instead keep input = adu and variance = (readnoise ./ gain).^2
 # At each pixel (i,j):
 weightsum = sum(gaussian_weight / variance[ii,jj] * input[ii,jj])
 varsum = sum(gaussian_weight / variance[ii,jj])

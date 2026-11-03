@@ -11,6 +11,22 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 ## [0.4.1]
 
 ### Fixed
+- PSF-aware sCMOS detection now converts each ADU pixel to photons with
+  `(adu - offset) * gain / qe`, uses variance `(readnoise / qe)^2` in photons²,
+  and applies the photon threshold with effective gain 1. ROI pixels still come
+  from the caller's ADU image; direct sigma/minval parameters retain ADU filtering.
+  With the lab gain map (0.396–0.504 e⁻/ADU), the old `min_photons=500` threshold
+  ranged from 428 to 545 photons; 4.3% of pixels differed by more than 5%.
+  Per-pixel photon detection swaps about 7% of boxes on 2000 lab frames, changes
+  counts by -0.17% to +0.10%, and finds net more clean in-focus spots above the
+  threshold in three of four runs.
+- sCMOS photon conversion now rejects non-finite scalar or mapped offset values,
+  naming the field and affected pixel count. The direct interface does not use offset.
+- Invalid image pixels now return a marker through batch processing, release GPU
+  memory normally, then raise outside the GPU catch. GPU-origin ArgumentError
+  failures again reclaim memory and fall back to CPU under `:auto`.
+- BoxerConfig again converts keyword values before validating them, including
+  `boxsize=9.0` and Int32 numeric fields accepted by the former @kwdef constructor.
 - sCMOS cameras with zero, negative or non-finite readnoise, gain or qe now raise
   `ArgumentError` naming the field and affected pixel count. A noise-free readout
   should use an IdealCamera with the image in photons.

@@ -62,6 +62,15 @@ using Test, SMLMBoxer, CUDA
     check_auto(image, reference, kw)
     check_gpu(image, kw)
 
+    # An ArgumentError from GPU processing follows the same reclaim/fallback path.
+    injected_fault[] = ArgumentError("injected GPU filter reason")
+    logs, result = Test.collect_test_logs() do
+        roi, info = getboxes(image; backend=:auto, auto_timeout=60.0, kw...)
+        (info.backend, same_boxes(roi, reference))
+    end
+    println("argument|fallback=", result == (:cpu, true), "|warning=",
+        any(log -> log.message == "GPU processing failed; using the CPU", logs))
+
     function check_interrupt(image, kw)
         interrupt = InterruptException()
         injected_fault[] = interrupt
@@ -95,6 +104,7 @@ using Test, SMLMBoxer, CUDA
     @test "auto|backend=cpu|same=true" in lines
     @test "auto|fast=true|warning=true" in lines
     @test "gpu|original=true|trace=true|fast=true" in lines
+    @test "argument|fallback=true|warning=true" in lines
     @test "interrupt|backend=auto|original=true|trace=true|fast=true" in lines
     @test "interrupt|backend=gpu|original=true|trace=true|fast=true" in lines
 end

@@ -87,8 +87,9 @@ GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-p
 | Variance-weighted DoG | `SCMOSCamera` | Inverse-variance weighting via KernelAbstractions | Spatially-varying readnoise |
 
 Variance weighting is automatic when an `SCMOSCamera` is provided — low-noise pixels get high weight, high-noise pixels get reduced influence.
-The variance is `(readnoise / gain)^2` in ADU², evaluated per pixel when either
-calibration is a map; SMLMData's gain is in e⁻/ADU.
+PSF-aware detection converts ADU to photons per pixel and uses `(readnoise / qe)^2`
+in photons². Direct detection retains `(readnoise / gain)^2` in ADU².
+SMLMData's gain is in e⁻/ADU; calibration can be scalar or mapped.
 
 ## Parameter Interfaces
 
@@ -103,7 +104,19 @@ count and first `(row, col, frame)`, including under `:auto`; integers skip the 
 strictly positive, including maps. Errors name the field and affected pixel count.
 A noise-free readout should use `IdealCamera` with the image in photons.
 
-Use the `BoxerConfig` keyword constructor. `min_photons` defaults to `nothing` and
+With an `SCMOSCamera`, the PSF-aware path (`psf_sigma`/`min_photons`) detects in
+photons per pixel: `(adu - offset) * gain / qe`, with variance `(readnoise / qe)^2`
+in photons². Offset, gain and QE may each be scalar or maps; offset must be finite
+when this conversion is used. The threshold uses effective gain 1 and the
+variance-weighted reference response to `min_photons` photons (uniform variance).
+Conversion runs on an owned batch copy on its device. ROI pixels are still cut
+from the caller's ADU image and retain the supplied camera and coordinate convention.
+The direct interface (`sigma_small`, `sigma_large`, `minval`) filters the image as
+given with `(readnoise / gain)^2` in ADU²; `minval` stays in those image units.
+
+
+Use the `BoxerConfig` keyword constructor. It converts values to field types before
+validation, including `boxsize=9.0` and `Int32` numeric fields. `min_photons` defaults to `nothing` and
 requires `psf_sigma`; when `psf_sigma` is given and `min_photons` omitted, the config
 stores **500.0**. Both must be finite and > 0. PSF-aware detection requires a camera
 whose pixels are all square and uniformly sized (relative tolerance 1e-4).
@@ -140,7 +153,7 @@ A kwargs interface is also available for one-off calls: `getboxes(imagestack, ca
 `min_photons` sets the filtered peak of a noise-free, pixel-integrated Gaussian spot:
 a spot with that many photons centered on a pixel just reaches the threshold. See
 `BoxerConfig` for subpixel-position effects. The threshold uses the actual
-filter kernels (uniform variance for sCMOS) and effective gain, so the camera paths
+filter kernels (uniform variance for sCMOS) with effective gain 1, so the camera paths
 can give slightly different thresholds. Noise and spatially varying calibration affect
 which real spots pass it.
 

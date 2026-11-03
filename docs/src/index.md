@@ -120,8 +120,11 @@ The `getboxes()` function implements a multi-stage blob detection pipeline:
    - DoG = Small - Large highlights blob features
    - Pixels near the image edge are filtered with the in-bounds part of each Gaussian, on both filtering paths
 
-2. **Variance Weighting (sCMOS)**: Each pixel is weighted by inverse variance in ADU²,
-   with `variance = (readnoise / gain)^2` (gain in e⁻/ADU), including per-pixel maps:
+2. **Variance Weighting (sCMOS)**: PSF-aware detection converts ADU per pixel to photons
+   using `(adu - offset) * gain / qe` and uses variance `(readnoise / qe)^2` in photons².
+   Direct parameters retain the image units and variance `(readnoise / gain)^2` in ADU².
+   Calibration can be scalar or mapped; offset must be finite when used. ROI pixels
+   still come from the caller's ADU image. With either interface:
    - Low-noise pixels receive high weight (strong influence)
    - High-noise pixels receive low weight (reduced false positives)
    - Implements optimal detection theory for spatially-varying noise
@@ -155,7 +158,9 @@ This automatically calculates:
 - minval threshold from photons accounting for PSF spreading and DoG response
 
 The threshold is the actual filter's peak response to a noise-free, pixel-integrated
-Gaussian with `min_photons` photons centered on a pixel, times effective gain.
+Gaussian with `min_photons` photons centered on a pixel, with effective gain 1.
+The sCMOS PSF-aware path detects in photons per pixel; direct `minval` keeps the
+image's original units.
 See [`BoxerConfig`](@ref) for subpixel-position effects. The sCMOS reference uses
 uniform variance and its own Gaussian windows; its threshold can differ slightly
 from the standard path. Noise and varying calibration affect real detections.
