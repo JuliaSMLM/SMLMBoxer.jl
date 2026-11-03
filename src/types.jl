@@ -1,7 +1,14 @@
 """
     BoxerConfig
 
-Configuration for ROI detection via getboxes().
+Configuration for ROI detection via getboxes(). Use the keyword constructor.
+
+Images must be finite, 2D or 3D, with both dimensions >= boxsize. A zero-frame stack
+returns an empty ROIBatch and BoxesInfo. Non-finite pixels raise ArgumentError with
+the count and first (row, col, frame), including under :auto. Integer inputs skip the scan.
+For SCMOSCamera, every readnoise, gain and qe value must be finite and > 0; errors
+name the field and affected pixel count. For a noise-free readout, use IdealCamera
+with the image in photons.
 
 Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 (sigma_small + sigma_large + minval). PSF-aware is recommended.
@@ -10,19 +17,25 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 
 ## PSF-Aware Interface (Recommended)
 - `psf_sigma::Union{Float64,Nothing}`: PSF sigma in microns (e.g., 0.13 for 130nm PSF).
-  Requires camera for pixel conversion. When set, overrides sigma_small/sigma_large/minval.
-- `min_photons::Float64`: Photon threshold (default: 500.0). A noise-free,
+  Must be finite and > 0. Requires a camera with uniform square pixels
+  (relative tolerance 1e-4); otherwise use sigma_small/sigma_large in pixels. When set, overrides sigma_small/sigma_large/minval.
+- `min_photons::Union{Float64,Nothing}`: Positive finite photon threshold. Defaults to
+  `nothing`; requires `psf_sigma`. With `psf_sigma`, omission stores 500.0. A noise-free,
   pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
   photon count. A spot centered on a pixel corner needs more photons, about 1.1× at a
   PSF sigma of 1.35 pixels (0.135 µm on 0.1 µm pixels), 1.2× at 1 pixel and
   1.5× at 0.7 pixel.
 
 ## Advanced Interface (Direct Control)
+Sigmas must be finite with `0 < sigma_small < sigma_large`; `minval` must be finite.
+
 - `sigma_small::Float64`: Small Gaussian sigma in pixels (default: 1.0)
 - `sigma_large::Float64`: Large Gaussian sigma in pixels (default: 2.0)
 - `minval::Float64`: DoG intensity threshold (default: 0.0)
 
 ## Box Parameters
+`boxsize >= 1` must fit both image dimensions; `overlap` must be finite and >= 0.
+
 - `boxsize::Int`: ROI box size in pixels, odd or even (default: 7)
 - `overlap::Float64`: pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
@@ -31,6 +44,8 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
   columns.
 
 ## Backend Parameters
+Timeouts must be >= 0 (Inf allowed); invalid parameters raise `ArgumentError`.
+
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
 - `auto_timeout::Float64`: Max wait for GPU in :auto mode before CPU fallback (default: 300.0)
 - `gpu_timeout::Float64`: Max wait for GPU in :gpu mode (default: Inf)
@@ -56,25 +71,63 @@ config = BoxerConfig(sigma_small=1.5, sigma_large=3.0, minval=10.0)
 config = BoxerConfig(psf_sigma=0.13, backend=:gpu, gpu_timeout=60.0)
 ```
 """
-Base.@kwdef struct BoxerConfig <: AbstractSMLMConfig
+struct BoxerConfig <: AbstractSMLMConfig
     # PSF-aware interface
-    psf_sigma::Union{Float64,Nothing} = nothing
-    min_photons::Float64 = 500.0
+    psf_sigma::Union{Float64,Nothing}
+    min_photons::Union{Float64,Nothing}
 
     # Advanced interface (direct control)
-    sigma_small::Float64 = 1.0
-    sigma_large::Float64 = 2.0
-    minval::Float64 = 0.0
+    sigma_small::Float64
+    sigma_large::Float64
+    minval::Float64
 
     # Box parameters
-    boxsize::Int = 7
-    overlap::Float64 = 2.0
+    boxsize::Int
+    overlap::Float64
 
     # Backend parameters
-    backend::Symbol = :auto
-    auto_timeout::Float64 = 300.0
-    gpu_timeout::Float64 = Inf
-    on_wait::Union{Function,Nothing} = nothing
+    backend::Symbol
+    auto_timeout::Float64
+    gpu_timeout::Float64
+    on_wait::Union{Function,Nothing}
+end
+
+"""Validate keyword parameters shared by the configuration and internal argument paths."""
+function validate_boxer_parameters(; psf_sigma, min_photons, sigma_small, sigma_large,
+        minval, boxsize, overlap, backend, auto_timeout, gpu_timeout, on_wait)
+    for (field, value) in ((:sigma_small, sigma_small), (:sigma_large, sigma_large),
+                           (:psf_sigma, psf_sigma), (:min_photons, min_photons))
+        value === nothing && continue
+        isfinite(value) && value > 0 || throw(ArgumentError(
+            "$field=$value must be finite and > 0"))
+    end
+    sigma_small < sigma_large || throw(ArgumentError(
+        "sigma_small=$sigma_small must be smaller than sigma_large=$sigma_large"))
+    min_photons !== nothing && psf_sigma === nothing && throw(ArgumentError(
+        "min_photons=$min_photons requires psf_sigma; use minval for a direct pixel threshold"))
+    isfinite(minval) || throw(ArgumentError("minval=$minval must be finite"))
+    boxsize >= 1 || throw(ArgumentError("boxsize=$boxsize must be >= 1"))
+    isfinite(overlap) && overlap >= 0 || throw(ArgumentError(
+        "overlap=$overlap must be finite and >= 0"))
+    backend in (:cpu, :gpu, :auto) || throw(ArgumentError(
+        "backend=$backend must be :cpu, :gpu, or :auto"))
+    for (field, value) in ((:auto_timeout, auto_timeout), (:gpu_timeout, gpu_timeout))
+        value >= 0 || throw(ArgumentError("$field=$value must be >= 0 (Inf is allowed)"))
+    end
+    on_wait === nothing || on_wait isa Function || throw(ArgumentError(
+        "on_wait=$on_wait must be a function or nothing"))
+    return psf_sigma === nothing ? nothing : something(min_photons, 500.0)
+end
+
+function BoxerConfig(; psf_sigma::Union{Real,Nothing}=nothing,
+        min_photons::Union{Real,Nothing}=nothing, sigma_small::Real=1.0,
+        sigma_large::Real=2.0, minval::Real=0.0, boxsize::Int=7, overlap::Real=2.0,
+        backend::Symbol=:auto, auto_timeout::Real=300.0, gpu_timeout::Real=Inf,
+        on_wait=nothing)
+    photons = validate_boxer_parameters(; psf_sigma, min_photons, sigma_small,
+        sigma_large, minval, boxsize, overlap, backend, auto_timeout, gpu_timeout, on_wait)
+    return BoxerConfig(psf_sigma, photons, sigma_small, sigma_large, minval,
+        boxsize, overlap, backend, auto_timeout, gpu_timeout, on_wait)
 end
 
 function Base.show(io::IO, config::BoxerConfig)
@@ -119,11 +172,8 @@ end
 """
     get_pixel_size(camera::AbstractCamera)
 
-Extract pixel size from camera pixel edges (in microns).
-Assumes approximately square pixels - returns x-direction pixel size.
-
-For non-square pixels, pixel_size_x and pixel_size_y may differ slightly.
-This function returns pixel_size_x for simplicity.
+Extract pixel size in microns for PSF-aware detection. Every pixel must be square
+and uniformly sized (relative tolerance 1e-4); otherwise use direct pixel sigmas.
 
 # Arguments
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
@@ -132,8 +182,15 @@ This function returns pixel_size_x for simplicity.
 - Pixel size in microns (x-direction)
 """
 function get_pixel_size(camera::AbstractCamera)
-    # Pixel size is the difference between consecutive edges
-    return camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
+    pixel_size = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
+    widths_x, widths_y = diff(camera.pixel_edges_x), diff(camera.pixel_edges_y)
+    narrowest = min(minimum(widths_x), minimum(widths_y))
+    widest = max(maximum(widths_x), maximum(widths_y))
+    isfinite(narrowest) && narrowest > 0 && isfinite(widest) &&
+        isapprox(narrowest, widest; rtol=1e-4, atol=0) ||
+        throw(ArgumentError("psf_sigma requires uniform square pixels (relative tolerance 1e-4); " *
+            "this camera can use sigma_small/sigma_large in pixels"))
+    return pixel_size
 end
 
 """
@@ -241,7 +298,8 @@ keyword arguments rather than constructing this directly.
 # Primary Interface (Recommended)
 - `psf_sigma::Real`: PSF sigma in microns (physical units, e.g., 0.13 for 130nm PSF)
   Requires camera to be provided for pixel size conversion.
-- `min_photons::Real`: Photon threshold (default: 500.0). A noise-free,
+- `min_photons::Union{Real,Nothing}`: Positive finite photon threshold. Defaults to
+  `nothing`; requires `psf_sigma`. With `psf_sigma`, omission uses 500.0. A noise-free,
   pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
   photon count. See `BoxerConfig` for subpixel-position effects.
 
@@ -283,6 +341,7 @@ mutable struct GetBoxesArgs
     auto_timeout::Float64
     gpu_timeout::Float64
     on_wait::Union{Function,Nothing}
+    check_pixels::Bool
 
     # Inner constructor handles conversion logic
     function GetBoxesArgs(;
@@ -291,15 +350,21 @@ mutable struct GetBoxesArgs
         boxsize::Int = 7,
         overlap::Real = 2.0,
         psf_sigma::Union{Real,Nothing} = nothing,
-        min_photons::Real = 500.0,
+        min_photons::Union{Real,Nothing} = nothing,
         sigma_small::Union{Real,Nothing} = nothing,
         sigma_large::Union{Real,Nothing} = nothing,
         minval::Union{Real,Nothing} = nothing,
         backend::Symbol = :auto,
         auto_timeout::Real = 300.0,
         gpu_timeout::Real = Inf,
-        on_wait::Union{Function,Nothing} = nothing
+        on_wait = nothing,
+        check_pixels::Bool = !(eltype(imagestack) <: Integer)
     )
+        min_photons = validate_boxer_parameters(; psf_sigma, min_photons,
+            sigma_small=something(sigma_small, 1.0), sigma_large=something(sigma_large, 2.0),
+            minval=something(minval, 0.0), boxsize, overlap, backend,
+            auto_timeout, gpu_timeout, on_wait)
+        camera isa SCMOSCamera && validate_scmos_calibration(camera)
         # Determine which interface is being used
         if psf_sigma !== nothing
             # PSF-aware detection (recommended)
@@ -308,15 +373,13 @@ mutable struct GetBoxesArgs
                 pixel_size_μm = get_pixel_size(camera)
                 psf_sigma_pixels = psf_sigma / pixel_size_μm
             else
-                error("psf_sigma in physical units (microns) requires camera to be provided. " *
-                      "Either provide a camera or use the advanced interface with sigma_small/sigma_large in pixels.")
+                throw(ArgumentError("psf_sigma=$psf_sigma in physical units (microns) requires camera to be provided. " *
+                      "Either provide a camera or use the advanced interface with sigma_small/sigma_large in pixels."))
             end
 
             σ_small = Float32(1.0 * psf_sigma_pixels)
             σ_large = Float32(2.0 * psf_sigma_pixels)
             effective_gain = get_effective_gain(camera)
-            min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels;
-                effective_gain, variance_weighted=camera isa SCMOSCamera)
         else
             # Direct control interface
             σ_small = Float32(sigma_small !== nothing ? sigma_small : 1.0)
@@ -324,15 +387,39 @@ mutable struct GetBoxesArgs
             min_val = Float32(minval !== nothing ? minval : 0.0)
         end
 
-        # Validate backend
-        backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
+        # The filter stores these values in Float32, so conversion must preserve validity.
+        for (field, value) in ((:sigma_small, σ_small), (:sigma_large, σ_large))
+            isfinite(value) && value > 0 || throw(ArgumentError(
+                "$field=$value must remain finite and > 0 in Float32"))
+        end
+        σ_small < σ_large || throw(ArgumentError(
+            "sigma_small=$σ_small must remain smaller than sigma_large=$σ_large in Float32"))
+        if psf_sigma !== nothing
+            min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels;
+                effective_gain, variance_weighted=camera isa SCMOSCamera)
+        end
+        isfinite(min_val) || throw(ArgumentError("minval=$min_val must remain finite in Float32"))
 
         # use_gpu is determined later in _getboxes_impl based on backend and memory availability
         initial_use_gpu = backend != :cpu
 
         new(imagestack, camera, boxsize, Float32(overlap), σ_small, σ_large, min_val,
-            initial_use_gpu, backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait)
+            initial_use_gpu, backend, Float64(auto_timeout), Float64(gpu_timeout), on_wait, check_pixels)
     end
+end
+
+"""Reject sCMOS calibration values that make inverse-variance filtering undefined."""
+function validate_scmos_calibration(camera::SCMOSCamera)
+    n_pixels = (length(camera.pixel_edges_y) - 1) * (length(camera.pixel_edges_x) - 1)
+    for field in (:readnoise, :gain, :qe)
+        value = getproperty(camera, field)
+        invalid(x) = !isfinite(x) || x <= 0
+        affected = value isa Real ? (invalid(value) ? n_pixels : 0) : count(invalid, value)
+        affected == 0 || throw(ArgumentError(
+            "$field has $affected affected pixels; values must be finite and positive (> 0). " *
+            "A noise-free readout should use an IdealCamera with the image in photons."))
+    end
+    return nothing
 end
 
 """
@@ -355,6 +442,7 @@ function get_variance_map(camera::IdealCamera{T}, imagesize::Tuple{Int,Int}) whe
 end
 
 function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int,Int}) where T
+    validate_scmos_calibration(camera)
     # SMLMData stores gain in e⁻/ADU and readnoise in e⁻, in (rows, cols) order.
     if camera.readnoise isa AbstractArray || camera.gain isa AbstractArray
         return Float32.((camera.readnoise ./ camera.gain).^2)

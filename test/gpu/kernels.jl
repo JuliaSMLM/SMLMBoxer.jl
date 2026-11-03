@@ -41,25 +41,45 @@ using Test, SMLMBoxer, CUDA, Random, NNlib, KernelAbstractions
     end
 end
 
-@testset "IdealCamera boxes near a NaN pixel match the CPU" begin
-    image = 20f0 .+ 3f0 .* randn(MersenneTwister(21), Float32, 96, 96, 2)
-    sigma = 1.35f0
-    spots = [(30, 30), (40, 52), (60, 60), (47, 41), (80, 20)]
-    for f in 1:2, (r, c) in spots, i in (r - 5):(r + 5), j in (c - 5):(c + 5)
-        image[i, j, f] += 2000f0 *
-            exp(-((i - r)^2 + (j - c)^2) / (2sigma^2)) / (2π * sigma^2)
+@testset "Non-finite input errors propagate on GPU and auto" begin
+    for storage in (identity, CuArray), backend in (:cpu, :gpu, :auto), bad in (NaN32, Inf32)
+        image = zeros(Float32, 32, 32, 3)
+        image[4, 5, 2] = bad
+        image[6, 7, 3] = bad
+        input = storage(image)
+        try
+            logs, err = Test.collect_test_logs() do
+                try
+                    getboxes(input; backend)
+                    nothing
+                catch e
+                    e
+                end
+            end
+            @test err isa ArgumentError
+            @test occursin("2 non-finite pixels", sprint(showerror, err))
+            @test occursin("(4, 5, 2)", sprint(showerror, err))
+            @test !any(log -> log.message == "GPU processing failed; using the CPU", logs)
+            @test isequal(Array(input), image)  # caller storage survives the error
+        finally
+            input isa CuArray && CUDA.unsafe_free!(input)
+        end
     end
-    image[45, 45, 1] = NaN32
-    camera = SMLMBoxer.IdealCamera(96, 96, 0.1f0)
-    kw = (psf_sigma = 0.135, min_photons = 500.0, boxsize = 7)
-    cpu, _ = getboxes(image, camera; backend = :cpu, kw...)
-    gpu, info = getboxes(image, camera; backend = :gpu, kw...)
-    @test info.backend == :gpu
-    @test !isempty(cpu.data)
-    @test isequal(gpu.data, cpu.data)
-    @test gpu.x_corners == cpu.x_corners
-    @test gpu.y_corners == cpu.y_corners
-    @test gpu.frame_indices == cpu.frame_indices
+    # Force three batches. The count and first coordinate refer to the entire stack.
+    image = zeros(Float32, 32, 32, 3)
+    image[4, 5, 2] = NaN32
+    image[6, 7, 3] = Inf32
+    args = SMLMBoxer.GetBoxesArgs(; imagestack=image, backend=:gpu)
+    err = try
+        SMLMBoxer._process_with_batching(SMLMBoxer.reshape_for_flux(image), args,
+            5, typemax(Int); use_gpu=true, max_batch_frames=1)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("2 non-finite pixels", sprint(showerror, err))
+    @test occursin("(4, 5, 2)", sprint(showerror, err))
 end
 
 @testset "Standard DoG borders match the CPU and preserve GPU interiors" begin

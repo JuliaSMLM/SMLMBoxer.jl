@@ -87,29 +87,54 @@ config = BoxerConfig(
 
 ### `BoxerConfig`
 
-Configuration struct for ROI detection parameters. Supports `@kwdef` construction with defaults.
+
+Images must be finite 2D images or 3D `(rows, cols, frames)` stacks, with each image
+dimension at least `boxsize`. Unsupported dimensions and undersized images raise
+`ArgumentError` before filtering. A zero-frame stack returns an empty `ROIBatch`
+and `BoxesInfo` (CPU, zero batches). NaN/Inf pixels raise `ArgumentError` with the
+count and first `(row, col, frame)`, including under `:auto`; integers skip the scan.
+
+`SCMOSCamera` requires every `readnoise`, `gain` and `qe` value to be finite and
+strictly positive, including maps. Errors name the field and affected pixel count.
+A noise-free readout should use `IdealCamera` with the image in photons.
+
+Use the `BoxerConfig` keyword constructor. `min_photons` defaults to `nothing` and
+requires `psf_sigma`; when `psf_sigma` is given and `min_photons` omitted, the config
+stores **500.0**. Both must be finite and > 0. PSF-aware detection requires a camera
+whose pixels are all square and uniformly sized (relative tolerance 1e-4).
+Other cameras can use `sigma_small`/`sigma_large` in pixels with the direct interface.
+
+Direct sigmas must be finite with `0 < sigma_small < sigma_large`, and `minval`
+must be finite. `boxsize >= 1`, `overlap` must be finite and >= 0,
+`backend` must be `:cpu`, `:gpu` or `:auto`, and both `auto_timeout` and `gpu_timeout`
+must be >= 0 (Inf allowed). `on_wait` is a function or `nothing`.
+Invalid parameters raise `ArgumentError` naming the field and value.
+
+
+Configuration struct for ROI detection parameters. Its keyword constructor validates
+parameters and resolves the PSF-aware photon default. Default keyword values:
 
 ```julia
-@kwdef struct BoxerConfig
+BoxerConfig(
     # PSF-aware interface (recommended)
-    psf_sigma::Union{Float64,Nothing} = nothing  # PSF sigma in microns
-    min_photons::Float64 = 500.0                 # Minimum photons for detection
+    psf_sigma = nothing,         # PSF sigma in microns
+    min_photons = nothing,       # 500.0 when psf_sigma is set
 
     # Advanced interface (direct control)
-    sigma_small::Float64 = 1.0    # Small Gaussian sigma in pixels
-    sigma_large::Float64 = 2.0    # Large Gaussian sigma in pixels
-    minval::Float64 = 0.0         # DoG intensity threshold
+    sigma_small = 1.0,           # Small Gaussian sigma in pixels
+    sigma_large = 2.0,           # Large Gaussian sigma in pixels
+    minval = 0.0,                # DoG intensity threshold
 
     # Box parameters
-    boxsize::Int = 7              # ROI size in pixels
-    overlap::Float64 = 2.0        # Local-maximum window is max(3, ⌊boxsize - overlap⌋)
+    boxsize = 7,                # ROI size in pixels
+    overlap = 2.0,              # Local-maximum window is max(3, ⌊boxsize - overlap⌋)
 
     # Backend parameters
-    backend::Symbol = :auto       # :cpu, :gpu, or :auto
-    auto_timeout::Float64 = 300.0  # Max wait for GPU in :auto mode
-    gpu_timeout::Float64 = Inf    # Max wait in :gpu mode
-    on_wait::Union{Function,Nothing} = nothing  # Optional wait progress callback
-end
+    backend = :auto,            # :cpu, :gpu, or :auto
+    auto_timeout = 300.0,       # Max wait for GPU in :auto mode
+    gpu_timeout = Inf,          # Max wait in :gpu mode
+    on_wait = nothing,          # Optional wait progress callback
+)
 ```
 
 **Usage:**
@@ -155,7 +180,7 @@ After clamping, keep the brightest filtered detection per corner and frame.
 
 *PSF-Aware Interface (Recommended):*
 - `psf_sigma::Real` - PSF sigma in microns (requires camera for pixel size conversion)
-- `min_photons::Real` - Photon threshold (default: 500.0). A noise-free,
+- `min_photons::Union{Real,Nothing}` - Photon threshold (default: nothing; 500.0 with psf_sigma). A noise-free,
   pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
   count. See `BoxerConfig` for subpixel-position effects.
 

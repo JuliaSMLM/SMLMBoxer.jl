@@ -8,6 +8,24 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
+## [0.4.1]
+
+### Fixed
+- sCMOS cameras with zero, negative or non-finite readnoise, gain or qe now raise
+  `ArgumentError` naming the field and affected pixel count. A noise-free readout
+  should use an IdealCamera with the image in photons.
+- Float images containing NaN/Inf now raise `ArgumentError` with the count and first
+  (row, col, frame), including under `:auto`, instead of losing or shifting detections.
+  Integer images skip the check; GPU batches are checked on device.
+- `min_photons` without `psf_sigma` now raises `ArgumentError` instead of being ignored.
+  Its keyword default is `nothing`; with `psf_sigma`, omission stores 500.0 in BoxerConfig.
+- Images smaller than `boxsize` and unsupported dimensions now raise `ArgumentError`
+  before filtering. Zero-frame stacks return an empty ROIBatch and BoxesInfo.
+- Invalid sigmas, thresholds, box sizes, overlap, backends and timeouts now raise
+  `ArgumentError` naming the field and value through shared keyword validation.
+- PSF-aware calls with rectangular or unequal camera pixels now raise `ArgumentError`
+  (relative tolerance 1e-4). Such cameras can still use direct sigmas in pixels.
+
 ## [0.4.0] - 2026-11-02
 
 ### Breaking
