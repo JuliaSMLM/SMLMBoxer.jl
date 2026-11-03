@@ -11,6 +11,9 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 ## [0.4.1]
 
 ### Fixed
+- GPU finite-pixel checks now scan into one explicitly freed four-byte device flag,
+  including on errors, instead of leaving GC-managed reduction buffers alive.
+  This restores GPU pool trimming without a GC after Float32 detection calls.
 - PSF-aware sCMOS detection now converts each ADU pixel to photons with
   `(adu - offset) * gain / qe`, uses variance `(readnoise / qe)^2` in photons²,
   and applies the photon threshold with effective gain 1. ROI pixels still come
