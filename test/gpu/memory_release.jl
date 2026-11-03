@@ -29,6 +29,21 @@ using Test, SMLMBoxer, CUDA
         @test length(roi) == 256
         println("release|camera=", typeof(camera), "|before=", before, "|after=", after)
         @test after <= before + 64 * 1024^2
+
+        # Input validation must trim the pool on its normal return path before
+        # reporting the ArgumentError, including under :auto (CUDA.jl 6.5).
+        invalid = zeros(Float32, 256, 256, 1024)
+        invalid[128, 128, 2] = NaN32
+        for backend in (:gpu, :auto)
+            before_invalid = process_memory(dev)
+            logs, err = Test.collect_test_logs() do
+                try getboxes(invalid,camera;minval=1.,backend,auto_timeout=120.,gpu_timeout=120.)
+                catch e e end
+            end
+            @test err isa ArgumentError
+            @test !any(log -> log.message == "GPU processing failed; using the CPU",logs)
+            @test process_memory(dev) <= before_invalid + 64 * 1024^2
+        end
     end
 
     camera = only(ARGS) == "scmos" ?

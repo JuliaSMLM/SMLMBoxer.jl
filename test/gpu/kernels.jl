@@ -70,13 +70,11 @@ end
     image[4, 5, 2] = NaN32
     image[6, 7, 3] = Inf32
     args = SMLMBoxer.GetBoxesArgs(; imagestack=image, backend=:gpu)
-    err = try
-        SMLMBoxer._process_with_batching(SMLMBoxer.reshape_for_flux(image), args,
-            5, typemax(Int); use_gpu=true, max_batch_frames=1)
-        nothing
-    catch e
-        e
-    end
+    coords, _, _, _ = SMLMBoxer._process_with_batching(SMLMBoxer.reshape_for_flux(image), args,
+        5, typemax(Int); use_gpu=true, max_batch_frames=1)
+    SMLMBoxer.release_gpu_memory()
+    @test coords === nothing
+    err = try SMLMBoxer.validate_finite_pixels(image) catch e e end
     @test err isa ArgumentError
     @test occursin("2 non-finite pixels", sprint(showerror, err))
     @test occursin("(4, 5, 2)", sprint(showerror, err))

@@ -23,6 +23,8 @@ ROI batch with location tracking and processing metadata.
   (relative tolerance 1e-4); otherwise use sigma_small/sigma_large in pixels.
 - `min_photons::Union{Real,Nothing}`: Positive finite minimum total photons. Defaults to
   `nothing`; requires `psf_sigma`. With `psf_sigma`, omission uses 500.0.
+  For sCMOS, each pixel is converted to photons before detection; the threshold
+  uses effective gain 1. ROI data is still cut from the supplied ADU image.
   A noise-free, pixel-integrated Gaussian centered on a pixel just reaches the
   threshold at this photon count. See `BoxerConfig` for subpixel-position effects.
 
@@ -98,7 +100,7 @@ When using the PSF-aware interface with `psf_sigma` (in microns):
 - sigma_small = 1.0 × psf_sigma_pixels (matches PSF for optimal blob detection)
 - sigma_large = 2.0 × psf_sigma_pixels (background suppression)
 - minval uses the actual filter kernels' peak response to a pixel-integrated Gaussian
-  of min_photons photons, times effective gain (QE / gain for sCMOS). The sCMOS reference
+  of min_photons photons, with effective gain 1. The sCMOS reference
   uses uniform variance and its own Gaussian windows, so thresholds can differ by path.
 
 ## Variance-Weighted Filtering (sCMOS)
@@ -107,12 +109,23 @@ When an SCMOSCamera is provided, the package uses **variance-weighted filtering*
 SMITE algorithm. Every readnoise, gain and qe value must be finite and > 0, including
 maps; otherwise `ArgumentError` names the field and affected pixel count. A noise-free
 readout should use an IdealCamera with the image in photons.
+With an `SCMOSCamera`, the PSF-aware path (`psf_sigma`/`min_photons`) detects in
+photons per pixel: `(adu - offset) * gain / qe`, with variance `(readnoise / qe)^2`
+in photons². Offset, gain and QE may each be scalar or maps; offset must be finite
+when this conversion is used. The threshold uses effective gain 1 and the
+variance-weighted reference response to `min_photons` photons (uniform variance).
+Conversion runs on an owned batch copy on its device. ROI pixels are still cut
+from the caller's ADU image and retain the supplied camera and coordinate convention.
+The direct interface (`sigma_small`, `sigma_large`, `minval`) filters the image as
+given with `(readnoise / gain)^2` in ADU²; `minval` stays in those image units.
+
 Each pixel's contribution to the convolution is weighted by:
 
     weight = gaussian_kernel / variance
 
-where variance = (readnoise / gain)² in ADU², per pixel when either calibration is a map
-(gain in e⁻/ADU). This implements inverse variance weighting:
+For PSF-aware detection, variance = (readnoise / qe)² in photons².
+For direct parameters, variance = (readnoise / gain)² in ADU²
+(gain in e⁻/ADU), including maps. This implements inverse variance weighting:
 - Low-noise pixels receive high weight (strong influence on detection)
 - High-noise pixels receive low weight (reduced influence, avoiding false positives)
 
@@ -276,7 +289,9 @@ end
 Process imagestack with memory-aware batching. Handles both single-batch (fits in memory)
 and multi-batch (too large) cases.
 
-Returns `(coords, batch_size, n_batches, memory_per_batch)`.
+Returns `(coords, batch_size, n_batches, memory_per_batch)`. If an input pixel is
+non-finite, `coords` is the marker `nothing`: all owned temporaries are freed normally,
+and the caller reports the input error after releasing device memory.
 
 # Arguments
 - `imagestack`: 4D image stack (ny, nx, 1, nframes)
@@ -293,7 +308,8 @@ function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
   n_images = size(imagestack, 4)
   n_images == 0 && return Matrix{Float32}[], 0, 0, 0
   memory_per_frame = estimate_gpu_memory_per_frame(
-    size(imagestack, 1), size(imagestack, 2), args.camera)
+    size(imagestack, 1), size(imagestack, 2), args.camera;
+    detect_in_photons=args.detect_in_photons)
   batch_size = frames_per_batch(n_images, memory_per_frame, max_free_mem, max_batch_frames)
   n_batches = cld(n_images, batch_size)
   memory_per_batch = batch_size * memory_per_frame
@@ -306,14 +322,20 @@ function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
     local coords_batch
     completed = false
     try
-      batch = n_batches == 1 ? imagestack : imagestack[:, :, :, start_idx:end_idx]
-      # Upload once, then check the same storage the GPU filter will read. Only the
-      # error path scans the whole host stack, for a global count and coordinate.
-      use_gpu && (batch = CuArray(batch))
-      if args.check_pixels && !pixels_are_finite(batch)
-        validate_finite_pixels(args.imagestack)
+      # Upload once, then check the same storage the GPU filter will read. Return
+      # invalid input normally so its ArgumentError never crosses the GPU catch.
+      if use_gpu
+        source = n_batches == 1 ? imagestack : @view(imagestack[:, :, :, start_idx:end_idx])
+        batch = source isa CuArray ? copy(source) : CuArray(source)
+      else
+        batch = n_batches == 1 ? imagestack : imagestack[:, :, :, start_idx:end_idx]
       end
-      filtered_batch = dog_filter(batch, args; use_gpu)
+      if args.check_pixels && !pixels_are_finite(batch)
+        completed = true
+        return nothing, batch_size, n_batches, memory_per_batch
+      end
+      filtered_batch = dog_filter(batch, args; use_gpu,
+          owned_input=use_gpu || n_batches != 1)
       coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu)
       completed = true
     finally
@@ -355,7 +377,8 @@ function _getboxes_impl(args::GetBoxesArgs)
 
   # Estimate memory needed for at least 1 frame (minimum batch)
   nrows, ncols = size(imagestack, 1), size(imagestack, 2)
-  min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera)
+  min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera;
+      detect_in_photons=args.detect_in_photons)
 
   # Track results
   actual_backend = :cpu
@@ -425,8 +448,6 @@ function _getboxes_impl(args::GetBoxesArgs)
         actual_backend = :gpu
         gpu_succeeded = true
       catch e
-        # Input errors are terminal under :auto as well as :gpu.
-        e isa ArgumentError && rethrow()
         reclaim_failed_gpu_attempt()
         e isa InterruptException && rethrow()
         if !is_gpu_resource_error(e)
@@ -469,6 +490,10 @@ function _getboxes_impl(args::GetBoxesArgs)
           use_gpu=false,
           batch_cleanup=() -> GC.gc(false))
   end
+
+  # A pixel-check marker takes the normal cleanup path above. Reporting it here
+  # cannot be confused with a GPU fault or trigger the :auto CPU fallback.
+  coords === nothing && validate_finite_pixels(args.imagestack)
 
   maxcoords = empty_stack ? zeros(Float32, 0, 4) : removeoverlap(coords, args)
 

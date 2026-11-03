@@ -35,7 +35,7 @@ end
                 if sigma == 0.135
                     factor = camera isa IdealCamera ? 0.547 : 0.581
                     expected = 500 * factor / (2π * (sqrt(2) * 1.35)^2)
-                    expected *= SMLMBoxer.get_effective_gain(camera)
+                    # PSF-aware filtering and its threshold are now both in photons.
                     @test args.minval ≈ expected rtol=0.01
                 end
                 for (scale, expected) in ((1.02, 1), (0.98, 0))

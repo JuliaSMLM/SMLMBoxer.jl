@@ -250,7 +250,7 @@ function poll_gpu_nvml(required_bytes::Integer;
 end
 
 """
-    estimate_gpu_memory_per_frame(height, width, camera) -> Int
+    estimate_gpu_memory_per_frame(height, width, camera; detect_in_photons=false) -> Int
 
 Estimate GPU memory required per frame.
 
@@ -258,11 +258,15 @@ Estimate GPU memory required per frame.
 - `height`: Image height in pixels
 - `width`: Image width in pixels
 - `camera`: Camera object (affects memory multiplier)
+- `detect_in_photons`: Include the owned photon copy for PSF-aware sCMOS processing.
+  The estimate uses 6 copies for standard DoG, 8 for direct sCMOS and 9 for photon sCMOS.
 
 # Returns
 - Estimated bytes needed per frame for GPU processing
 """
-function estimate_gpu_memory_per_frame(height::Int, width::Int, camera)
-    n_copies = camera isa SCMOSCamera ? 8 : 6
+function estimate_gpu_memory_per_frame(height::Int, width::Int, camera; detect_in_photons::Bool=false)
+    # Include the photon copy needed when the CPU batch borrows the full ADU stack;
+    # the GPU normally converts its existing owned upload without another copy.
+    n_copies = camera isa SCMOSCamera ? 8 + Int(detect_in_photons) : 6
     return height * width * sizeof(Float32) * n_copies
 end

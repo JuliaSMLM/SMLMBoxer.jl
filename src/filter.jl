@@ -95,13 +95,16 @@ at image edges, as in the sCMOS path. Interior convolution values are left untou
 # Arguments
 - `imagestack`: Input array of image data
 - `args`: Arguments with sigma values and camera
+- `owned_input`: Allow in-place photon conversion on a buffer owned by the caller
+  (default false; borrowed PSF-aware sCMOS input is copied).
 - `use_gpu`: Filter on the GPU; the caller's backend decision, which overrides `args.use_gpu`
   (a CPU fallback must not filter on the GPU)
 
 # Returns
 - `filtered_stack`: Filtered image stack
 """
-function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs; use_gpu::Bool=args.use_gpu)
+function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs;
+        use_gpu::Bool=args.use_gpu, owned_input::Bool=false)
 
     sigma_small = args.sigma_small
     sigma_large = args.sigma_large
@@ -109,7 +112,7 @@ function dog_filter(imagestack::AbstractArray{<:Real}, args::GetBoxesArgs; use_g
     # Check if we have an sCMOS camera with variance information
     if args.camera isa SCMOSCamera
         filtered_stack = dog_filter_variance_weighted(
-            imagestack, sigma_small, sigma_large, args; use_gpu)
+            imagestack, sigma_small, sigma_large, args; use_gpu, owned_input)
     else
         # Standard DoG filtering (may return CuArray if use_gpu=true)
         kernel_small, kernel_large = dog_kernel_pair(Float32(sigma_small), Float32(sigma_large))
@@ -193,8 +196,10 @@ end
 """
     dog_filter_variance_weighted(imagestack, sigma_small, sigma_large, args; use_gpu=args.use_gpu)
 
-Apply variance-weighted DoG filter using sCMOS variance map.
-Implements SMITE-style inverse variance weighting during convolution.
+Apply variance-weighted DoG filtering. PSF-aware sCMOS input is converted per pixel
+from ADU to photons on an owned copy, with variance (readnoise / qe)^2 in photons².
+Direct parameters retain the original ADU image and variance (readnoise / gain)^2.
+The same inverse-variance convolution runs on CPU and GPU.
 
 # Arguments
 - `imagestack`: Input image data (rows, cols, 1, frames)
@@ -210,13 +215,15 @@ function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
                                        sigma_small::Real,
                                        sigma_large::Real,
                                        args::GetBoxesArgs;
-                                       use_gpu::Bool=args.use_gpu)
+                                       use_gpu::Bool=args.use_gpu,
+                                       owned_input::Bool=false)
     # Get image dimensions (rows, cols, 1, frames)
     nrows, ncols, _, nframes = size(imagestack)
 
-    # Get variance map from camera in ADU²: variance = (readnoise / gain)^2
+    # Photon detection uses (readnoise / qe)^2; direct parameters retain ADU².
     # Convert to match imagestack element type to avoid type mismatch
-    variance_map = convert(Matrix{eltype(imagestack)}, get_variance_map(args.camera, (nrows, ncols)))
+    variance_map = convert(Matrix{eltype(imagestack)}, get_variance_map(
+        args.camera, (nrows, ncols); photons=args.detect_in_photons))
 
     input_gpu = variance_gpu = filtered_small = filtered_large = nothing
     completed = false
@@ -227,7 +234,19 @@ function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
             if !(input isa CuArray)
                 input_gpu = CuArray(input)
                 input = input_gpu
+            elseif args.detect_in_photons && !owned_input
+                input_gpu = copy(input)
+                input = input_gpu
             end
+        elseif args.detect_in_photons && !owned_input
+            input = copy(input)
+        end
+
+        if args.detect_in_photons
+            convert_detection_to_photons!(input, args.camera; use_gpu)
+        end
+
+        if use_gpu && CUDA.functional()
             variance_gpu = CuArray(variance_map)
             variance_map = variance_gpu
         end
@@ -245,6 +264,40 @@ function dog_filter_variance_weighted(imagestack::AbstractArray{<:Real},
         free_gpu_arrays(input_gpu, variance_gpu, filtered_large,
             completed ? nothing : filtered_small; failed=!completed)
     end
+end
+
+"""
+    convert_detection_to_photons!(owned_input, camera; use_gpu=false)
+
+Convert an owned detection buffer from ADU to photons per pixel, on its current device.
+Scalar or map offset, gain and QE are supported. Calibration uploads are freed here;
+the caller owns the input buffer and is responsible for its cleanup.
+"""
+function convert_detection_to_photons!(input, camera::SCMOSCamera; use_gpu::Bool=false)
+    offset_gpu = gain_gpu = qe_gpu = nothing
+    completed = false
+    try
+        offset, gain, qe = camera.offset, camera.gain, camera.qe
+        if use_gpu && CUDA.functional()
+            if offset isa AbstractArray
+                offset_gpu = CuArray(offset)
+                offset = offset_gpu
+            end
+            if gain isa AbstractArray
+                gain_gpu = CuArray(gain)
+                gain = gain_gpu
+            end
+            if qe isa AbstractArray
+                qe_gpu = CuArray(qe)
+                qe = qe_gpu
+            end
+        end
+        input .= (input .- offset) .* gain ./ qe
+        completed = true
+    finally
+        free_gpu_arrays(offset_gpu, gain_gpu, qe_gpu; failed=!completed)
+    end
+    return input
 end
 
 """
