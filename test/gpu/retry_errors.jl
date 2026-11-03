@@ -1,9 +1,8 @@
 using Test, SMLMBoxer, SMLMData, CUDA
 
-@testset "GPU processing raises non-resource errors immediately" begin
+@testset "Camera mismatch raises before GPU processing" begin
     # The camera and its readnoise map agree, but not with the 32x32 image below.
-    # GetBoxesArgs does not check this: _process_with_batching -> dog_filter ->
-    # dog_filter_variance_weighted -> get_variance_map asserts inside the GPU attempt.
+    # getboxes must reject it before device selection, filtering, or GPU retries.
     camera = SCMOSCamera(16, 16, 0.1f0, fill(5.0f0, 16, 16))
     image = zeros(Float32, 32, 32)
 
@@ -15,7 +14,7 @@ using Test, SMLMBoxer, SMLMData, CUDA
     for backend in (:gpu, :auto)
         @testset "$backend" begin
             logs, _ = Test.collect_test_logs() do
-                @test_throws AssertionError getboxes(image, camera;
+                @test_throws DimensionMismatch getboxes(image, camera;
                     backend=backend, gpu_timeout=20.0, auto_timeout=20.0)
             end
             @test !any(log -> log.message ==

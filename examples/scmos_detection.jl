@@ -207,7 +207,7 @@ println("  Camera: $(typeof(roi_batch.camera))")
 println()
 
 println("Variance-Weighted Filtering:")
-println("  ✓ Each pixel weighted by inverse variance (1/readnoise²)")
+println("  ✓ Each pixel weighted by inverse variance in ADU²: (gain/readnoise)²")
 println("  ✓ Low-noise pixels contribute more to detection")
 println("  ✓ High-noise pixels down-weighted, reducing false positives")
 println("  ✓ GPU-accelerated via KernelAbstractions.jl")

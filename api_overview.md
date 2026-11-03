@@ -29,16 +29,17 @@ Specify physical PSF parameters (in microns), automatically converted to optimal
 
 ### Variance-Weighted Filtering (sCMOS)
 When `SCMOSCamera` is provided, implements SMITE-style inverse variance weighting:
-- Each pixel weighted by `gaussian_kernel / variance` where variance = readnoise²
+- Each pixel weighted by `gaussian_kernel / variance`, with
+  `variance = (readnoise / gain)^2` in ADU² (gain in e⁻/ADU)
 - Low-noise pixels: high weight (strong detection influence)
 - High-noise pixels: low weight (reduced false positives)
 - GPU-accelerated via KernelAbstractions.jl (device-agnostic kernels)
 
 ### GPU Acceleration and Scheduling
-- Standard DoG: NNlib on CPU, KernelAbstractions kernel on GPU. On 500 frames, compared
-  with 32 CPU threads, the GPU is about 2-10x faster with an IdealCamera and about
-  20-80x faster with an SCMOSCamera, measured on AMD Ryzen 9 5950X / NVIDIA RTX 4090
-  with SMLMBoxer 0.3.4, CUDA.jl 6.5.0 and KernelAbstractions 0.10.4
+- Standard DoG: NNlib on CPU, KernelAbstractions kernel on GPU. On 500 frames at
+  256×256, IdealCamera GPU throughput is 13,805 images/s versus 876 with 32 CPU threads,
+  measured on AMD Ryzen 9 5950X / NVIDIA RTX 4090 with SMLMBoxer 0.4.0, CUDA.jl 6.5.0
+  and KernelAbstractions 0.10.4
 - Variance-weighted: KernelAbstractions custom kernels (same code for CPU/GPU)
 - Multi-GPU support: polling selects the eligible GPU with the most free memory
 
@@ -55,14 +56,15 @@ dependency; SMLMBoxer does not use Reactant or need setup for it.
    and low utilization. When NVML cannot report a GPU's memory, ask CUDA for it
 3. Acquire GPU context and run processing
 4. On GPU memory errors or an unavailable device (including context-creation races):
-   try to release memory via `GC.gc() + CUDA.reclaim()`. Halve the failed batch's frame
+   try to release memory via `GC.gc(false)`, `CUDA.reclaim()` and
+   `release_gpu_memory()`. Halve the failed batch's frame
    cap and retry immediately; only after a single-frame failure re-poll with the
    remaining timeout
 5. On any other GPU failure: try to release memory; under `:auto`, warn and use the CPU
    at once; under `:gpu`, raise the original error at once
 6. On timeout: `:auto` falls back to CPU, `:gpu` errors with the failed batch size and
    memory need
-7. On success: reclaim the GPU memory pool (see the CUDA.jl 6.5.0 caveat below)
+7. On success: release explicitly freed GPU memory without full garbage collection
 
 **Backend modes:**
 - `:cpu` - Always CPU, no GPU involvement
@@ -139,6 +141,10 @@ getboxes(imagestack, camera=nothing; kwargs...) -> (ROIBatch, BoxesInfo)
 Both conventions are equivalent - kwargs are forwarded to a BoxerConfig internally.
 
 Main detection function. Applies DoG filtering, finds local maxima, extracts ROI patches.
+Image (rows, columns) must match the camera pixel edges, or `DimensionMismatch` is raised.
+Crop the camera together with the image. Odd and even box sizes share the corner rule
+`clamp(center - (boxsize - 1) ÷ 2, 1, image_size - boxsize + 1)` on each axis.
+After clamping, keep the brightest filtered detection per corner and frame.
 
 **Arguments:**
 - `imagestack::AbstractArray{<:Real}` - Input image stack (2D or 3D)
@@ -149,7 +155,9 @@ Main detection function. Applies DoG filtering, finds local maxima, extracts ROI
 
 *PSF-Aware Interface (Recommended):*
 - `psf_sigma::Real` - PSF sigma in microns (requires camera for pixel size conversion)
-- `min_photons::Real` - Minimum total photons for detection (default: 500.0)
+- `min_photons::Real` - Photon threshold (default: 500.0). A noise-free,
+  pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
+  count. See `BoxerConfig` for subpixel-position effects.
 
 *Advanced Interface (Direct Control):*
 - `sigma_small::Real` - Small Gaussian sigma in pixels (default: 1.0)
@@ -157,11 +165,11 @@ Main detection function. Applies DoG filtering, finds local maxima, extracts ROI
 - `minval::Real` - DoG intensity threshold (default: 0.0)
 
 *Other Parameters:*
-- `boxsize::Int` - ROI size in pixels (default: 7)
+- `boxsize::Int` - ROI size in pixels, odd or even (default: 7)
 - `overlap::Real` - pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
   pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
-  not a bound on box overlap: with the defaults, neighbouring boxes can share 4 rows or
+  not a bound on box overlap: with the defaults, neighboring boxes can share 4 rows or
   columns.
 - `backend::Symbol` - Compute backend: `:cpu`, `:gpu`, or `:auto` (default: `:auto`)
   - `:cpu` - Always use CPU
@@ -226,6 +234,7 @@ for chunk_start in 1:max_frames:total_frames
     chunk_end = min(chunk_start + max_frames - 1, total_frames)
     imagestack = load_frames(chunk_start:chunk_end)
     (roi_batch, info) = getboxes(imagestack, camera; psf_sigma=0.13)
+    roi_batch.frame_indices .+= chunk_start - 1
     # ... process results
 end
 ```
@@ -358,8 +367,6 @@ These functions are documented but not part of the public API. Use at your own r
 **Helper Functions:**
 - `get_pixel_size(camera)` - Extract pixel size from camera
 - `photons_to_dog_threshold(min_photons, psf_sigma)` - Convert photon threshold to DoG threshold
-- `pixels_to_microns(pixel_coords, camera)` - Coordinate conversion
-- `extract_camera_roi(camera, row_range, col_range)` - Extract camera calibration for ROI
 - `get_variance_map(camera, imagesize)` - Compute variance map from camera
 - `reshape_for_flux(arr)` - Reshape array for NNlib convolution
 
@@ -368,8 +375,10 @@ These functions are documented but not part of the public API. Use at your own r
 ### Detection Pipeline
 1. **Filtering**: Apply DoG filter (standard or variance-weighted based on camera type)
 2. **Local Maxima**: Find peaks above threshold using max pooling
-3. **Overlap Removal**: Eliminate overlapping detections (keep higher intensity)
-4. **Box Extraction**: Cut out ROI patches around each detection
+3. **Overlap Removal**: Maxima sharing a max-pool window have equal intensities;
+   the earlier detection is kept
+4. **Box Extraction**: Clamp corners and retain one box per corner and frame,
+   keeping the brightest filtered detection
 5. **ROIBatch Construction**: Package results with camera calibration
 
 ### PSF-Aware Parameter Conversion
@@ -383,15 +392,26 @@ sigma_small = 1.0 × psf_sigma_pixels  # Match PSF
 sigma_large = 2.0 × psf_sigma_pixels  # Background suppression
 
 # Photon threshold → DoG intensity threshold
-σ_eff = √(psf_sigma_pixels² + sigma_small²)  # Effective sigma after filtering
-peak_filtered = min_photons / (2π × σ_eff²)
-minval = 0.65 × peak_filtered × effective_gain
+# P[i,j] is the integral over pixel (i,j) of a unit-photon Gaussian centered on a pixel.
+# Ks, Kl are the actual normalized small and large Gaussian kernels of this path.
+minval = min_photons * effective_gain * (sum(Ks .* P_small) - sum(Kl .* P_large))
 # effective_gain: 1 for IdealCamera (photons); QE / gain for SCMOSCamera (ADU)
 ```
+
+The standard kernels come from `dog_kernel_pair`, with common odd size at least
+`ceil(4 * sigma_large)`. The sCMOS reference uses uniform variance and its actual
+windows, each with half-width `ceil(3 * sigma)`. Pixel integrals use numerical
+quadrature accurate to 1e-4 relative; no empirical DoG factor is used.
+At PSF sigma 1.35 pixels, the response is about 0.547 (standard) or 0.581 (sCMOS)
+times `N / (2π * (sqrt(2) * 1.35)^2)`. A noise-free spot of `min_photons` photons
+centered on a pixel just reaches the threshold. See `BoxerConfig` for
+subpixel-position effects. Noise and varying calibration affect real detections.
 
 ### Variance-Weighted Convolution
 For sCMOS cameras with readnoise map:
 ```julia
+# Calibration is converted per pixel when readnoise or gain is a map:
+variance = (readnoise ./ gain).^2  # ADU²
 # At each pixel (i,j):
 weightsum = sum(gaussian_weight / variance[ii,jj] * input[ii,jj])
 varsum = sum(gaussian_weight / variance[ii,jj])
@@ -411,16 +431,20 @@ Implements optimal inverse variance weighting for spatially-varying noise.
   the timeout. Any other GPU failure uses the CPU at once under `:auto`, or raises the
   original error at once under `:gpu`. Each failed attempt tries to release memory;
   cleanup errors cannot mask the original error or prevent CPU fallback.
-- **Memory Pool Reclaim**: Calls `GC.gc() + CUDA.reclaim()` after successful GPU processing
-  and attempts it after failures. With CUDA.jl 6.5.0, freed pool memory stays reserved
-  until the process exits, unavailable to other processes; see the changelog's known issue.
+- **Memory Pool Release**: Explicitly frees owned GPU arrays within each batch, including
+  on errors. Successful calls synchronize, purge caches and trim the pool without full
+  garbage collection from CUDA.jl 6.2, when `RECLAIM_PURGE` became available and the
+  default `reclaim()` started running a full GC. CUDA.jl 5, 6.0 and 6.1 use their GC-free
+  `CUDA.reclaim()`. Failed attempts use `GC.gc(false)`, `CUDA.reclaim()` and
+  `release_gpu_memory()`. Release after a short call takes about 0.02 ms on the
+  RTX 4090; returning 2 GiB to the driver takes about 42 ms. On CUDA.jl 5.9 to
+  6.5.0, the process is back within 64 MiB of its baseline after a call.
 - **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting
-- **Typical Speedup**: On 500 frames, compared with 32 CPU threads, the GPU is about
-  2-10x faster with an IdealCamera and about 20-80x faster with an SCMOSCamera, measured
-  on AMD Ryzen 9 5950X / NVIDIA RTX 4090 with SMLMBoxer 0.3.4, CUDA.jl 6.5.0 and
-  KernelAbstractions 0.10.4. The fixed cost per GPU call was about 60 ms on an RTX 4090,
-  mostly releasing the GPU memory pool after the call, whatever the stack size, so GPU
-  throughput depends on stack length. At 256×256 with an IdealCamera, the CPU and GPU
-  break even at about 10 frames on one CPU thread and about 50 frames on 32 threads;
-  below that use `backend = :cpu` if speed matters. 0.3.3 has the same fixed cost.
+- **Typical Speedup**: A warmed-up 256×256×10 GPU call takes about 0.75 ms in 0.4.0,
+  down from about 57 ms in 0.3.4 on the RTX 4090 (medians of 0.73–0.84 ms across
+  CUDA.jl 6.4.2 and 6.5.0). The GPU wins from one frame at every size tested (128,
+  256 and 512 px), with either camera path and either one or 32 CPU threads on the
+  AMD Ryzen 9 5950X. On 500 frames at 256×256, GPU throughput is 13,805 images/s with
+  an IdealCamera and 10,643 with an SCMOSCamera, versus 876 and 76 with 32 CPU threads,
+  measured with CUDA.jl 6.5.0 and KernelAbstractions 0.10.4.

@@ -54,22 +54,31 @@ transfers only the sparse indices and values (~1.2 MB for ~100K maxima).
 function _gpu_maxima2coords(localmaximage::CuArray{T}) where T<:Real
     nrows, ncols, _, nframes = size(localmaximage)
 
-    # Flatten to 1D for findall — GPU prefix-sum compaction
-    flat = reshape(localmaximage, :)
-    mask = flat .!= zero(T)
-    nz_indices = findall(mask)  # CuArray{Int64,1} — stays on GPU
+    flat = mask = nz_indices = nz_values = nothing
+    local nz_indices_cpu, nz_values_cpu
+    completed = false
+    try
+        # The reshape owns a reference to storage, not the caller's array object.
+        flat = reshape(localmaximage, :)
+        mask = flat .!= zero(T)
+        nz_indices = findall(mask)
+        CUDA.unsafe_free!(mask)
+        mask = nothing
 
-    # Early return if no maxima found
-    if isempty(nz_indices)
-        return [zeros(Float32, 0, 4) for _ in 1:nframes]
+        if isempty(nz_indices)
+            completed = true
+            return [zeros(Float32, 0, 4) for _ in 1:nframes]
+        end
+
+        nz_values = flat[nz_indices]
+        # Transfer only sparse data to CPU (~1.2 MB vs ~1 GB).
+        nz_indices_cpu = Array(nz_indices)
+        nz_values_cpu = Array(nz_values)
+        completed = true
+    finally
+        free_gpu_arrays(mask, nz_indices, nz_values,
+            flat === localmaximage ? nothing : flat; failed=!completed)
     end
-
-    # Gather values at nonzero indices (GPU gather)
-    nz_values = flat[nz_indices]
-
-    # Transfer only sparse data to CPU (~1.2 MB vs ~1 GB)
-    nz_indices_cpu = Array(nz_indices)
-    nz_values_cpu = Array(nz_values)
 
     # Convert linear indices to (row, col, 1, frame) subscripts
     ci = CartesianIndices((nrows, ncols, 1, nframes))
@@ -106,19 +115,22 @@ end
 """
    removeoverlap(coords, args)
 
-Remove overlapping coords based on distance.
-Boxes are compared in index order, dropping the dimmer of each overlapping pair.
-Ties drop the later box.
+Remove maxima sharing a max-pool window, using Chebyshev distance < cld(k, 2),
+where k = max(3, floor(Int, boxsize - overlap)). Maxima from the filter that share a
+window have equal intensities, so the earlier detection is kept. For other input, the
+dimmer of two maxima is dropped and ties drop the later one. Keep intensities for
+clamped-corner selection.
 
 # Arguments
 - `coords`: List of coords
 - `args`: Parameters
 
 # Returns
-- `coords`: Coords with overlaps removed
+- `coords`: Matrix of (row, col, frame, filtered intensity) with overlaps removed
 """
 function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
-    overlap = kwargs.overlap
+    k = max(3, floor(Int, kwargs.boxsize - kwargs.overlap))
+    separation = cld(k, 2)
     for f in eachindex(coords)
         c = coords[f]
         ncoords = size(c, 1)
@@ -133,8 +145,7 @@ function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
                     if keep[j]
                         dx = xi - c[j, 1]
                         dy = yi - c[j, 2]
-                        dist = sqrt(dx^2 + dy^2)
-                        if dist <= overlap
+                        if max(abs(dx), abs(dy)) < separation
                             if intensity_i < c[j, 4]
                                 keep[i] = false
                                 break
@@ -148,5 +159,5 @@ function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
         end
         coords[f] = coords[f][keep, :]
     end
-    return vcat(coords...)[:, 1:3]
+    return vcat(coords...)
 end

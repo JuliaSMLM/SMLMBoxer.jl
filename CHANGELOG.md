@@ -8,6 +8,69 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-02
+
+### Breaking
+- `min_photons` now uses the actual DoG filter response to a pixel-integrated Gaussian,
+  replacing the empirical 0.65 factor. A noise-free spot centered on a pixel just reaches
+  the threshold at that photon count. At a PSF sigma of 1.35 pixels (0.135 µm on
+  0.1 µm pixels), a pixel-corner spot needs about 1.1× as many photons; at sigma
+  1 pixel it needs about 1.2×, and at 0.7 pixel about 1.5×. The standard and sCMOS
+  paths use their own kernels. Among 62,682 clean in-focus lab spots,
+  half are detected near 487 fitted photons at `min_photons = 500`, versus 566 before.
+  The same setting finds more boxes: on 2000 lab frames at `min_photons = 500`, 6.5%
+  more with an IdealCamera and 4.1% more with an SCMOSCamera (10.3% and 6.7% at 1000);
+  every box 0.3.4 found on the IdealCamera path is still found.
+  At a PSF sigma of 1.35 px, multiplying `min_photons` by 1.19 (IdealCamera) or
+  1.12 (sCMOS) gives 0.3.4's threshold (0.65 / 0.547 and 0.65 / 0.581).
+- Images must match their camera's (rows, columns), or raise `DimensionMismatch`.
+  A 192 × 192 crop passed with its full 256 × 256 camera previously returned 24,347
+  boxes with coordinates silently wrong by 64 pixels.
+- sCMOS variance weighting now uses `(readnoise / gain)^2` in ADU², including maps.
+  This fixes the units: the image is in ADU, so the variance must be in ADU².
+  On real frames with gain 0.40–0.50 e⁻/ADU, 2.3% of boxes change, with no measurable
+  change in detections. With every box fitted on frames 1–2000, added boxes hold
+  1,091 clean in-focus spots of at least 500 photons, versus 1,052 in removed boxes;
+  on frames 2001–4000 the counts are 1,168 versus 1,149.
+
+### Fixed
+- Increasing `overlap` now permits closer neighbors according to the max-pool window.
+  Maxima sharing that window have equal intensities; the earlier detection is kept.
+  On 2000 lab frames this adds 66 boxes at boxsize 9 / overlap 3,
+  1,396 at boxsize 9 / overlap 4, and 201 at boxsize 11 / overlap 4, removing none;
+  default-overlap results are unchanged for boxsize 7 and larger. At boxsize 5,
+  default overlap keeps 28 more boxes per 1000 frames, real neighbors the old rule removed.
+- Even box sizes use the same clamped-corner rule as odd sizes; real-frame box sizes
+  8 and 10 previously raised `DimensionMismatch`. Odd-size crops remain unchanged.
+- After clamping, keep only the brightest filtered detection per (corner, frame).
+  This removes the 3–13 duplicate boxes per 2000 real frames seen in 0.3.4.
+- 0.3.4's known issue is fixed: under CUDA.jl 6.5.0, a `getboxes` call now returns
+  its GPU memory to the driver. After a 1000-frame call on real frames, a process holds
+  32 to 64 MiB more than before it, against 1,120 MiB (IdealCamera) and 1,600 MiB
+  (sCMOS) with 0.3.4.
+- The chunked `recommend_batch_size` example offsets frame indices by the chunk start.
+  The lab caller already tracks this offset; no new keyword is needed.
+
+### Changed
+- The release after each successful GPU call no longer runs a full garbage collection.
+  Owned GPU arrays are explicitly freed within each batch, also on errors. From CUDA.jl
+  6.2, when `reclaim()` started running a full GC, release uses blocking synchronization,
+  cache purging and pool trimming; CUDA.jl 5, 6.0 and 6.1 retain their GC-free reclaim.
+  A warmed-up 256×256×10 GPU call on the RTX 4090 falls from about 57 ms in 0.3.4 to
+  0.75 ms (medians of 0.73–0.84 ms across CUDA.jl 6.4.2 and 6.5.0). IdealCamera GPU
+  throughput on 500 frames at 256×256 rises from 5,329 to 13,805 images/s. The GPU wins
+  from one frame at all tested sizes (128, 256 and 512 px), with either one or 32 CPU
+  threads on the AMD Ryzen 9 5950X. Release after a short call takes
+  about 0.02 ms; returning 2 GiB to the driver takes about 42 ms. On
+  CUDA.jl 5.9 to 6.5.0, the process is back within 64 MiB of its baseline after a call.
+  The lab pipeline (SMLMAnalysis with GaussMLE, which caps CUDA.jl at 5.11.3) does not
+  see the 57 ms: under 5.11.3, `reclaim()` has no GC, and the same call takes 1.73 ms
+  in 0.3.4 and 1.40 ms in 0.4.0.
+- Removed unused internal `find_best_gpu`, `select_backend`, `wait_for_gpu_memory`,
+  and `estimate_gpu_memory` helpers, the discarded per-box camera ROI construction, and
+  the uncalled internal `extract_camera_roi` and `pixels_to_microns`.
+  The per-frame memory estimator is unchanged.
+
 ## [0.3.4] - 2026-11-02
 
 ### Changed
