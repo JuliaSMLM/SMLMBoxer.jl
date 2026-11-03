@@ -57,6 +57,45 @@ function free_gpu_arrays(arrays...; failed::Bool=false)
     return nothing
 end
 
+"""Scan strided pixels on the GPU, setting an owned flag if any pixel is non-finite."""
+@kernel function finite_pixels_kernel!(flag, @Const(image), stride)
+    worker = @index(Global, Linear)
+    for pixel in worker:stride:length(image)
+        if !isfinite(@inbounds image[pixel])
+            CUDA.atomic_or!(pointer(flag), UInt32(1))
+            break
+        end
+    end
+end
+
+"""
+    pixels_are_finite(image::CuArray) -> Bool
+
+Check pixels on their device using one explicitly owned four-byte flag. Unlike a
+GPU mapreduce, this leaves no GC-managed device reduction buffers behind. Free the
+flag on successful, non-finite and exceptional returns; the caller owns the image.
+"""
+function pixels_are_finite(image::CuArray)
+    isempty(image) && return true
+    flag = nothing
+    completed = false
+    try
+        flag = CUDA.zeros(UInt32, 1)
+        # Enough workers to occupy the device, with coalesced reads on each stride.
+        # The valid-input path writes no atomics and never builds a pixel mask.
+        workers = min(length(image), 65536)
+        backend = CUDABackend()
+        kernel! = finite_pixels_kernel!(backend, 256)
+        kernel!(flag, image, workers; ndrange=workers)
+        KernelAbstractions.synchronize(backend)
+        finite = iszero(only(Array(flag)))
+        completed = true
+        return finite
+    finally
+        free_gpu_arrays(flag; failed=!completed)
+    end
+end
+
 """
     release_gpu_memory()
 

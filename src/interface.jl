@@ -257,15 +257,18 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
   return getboxes(imagestack, camera, config)
 end
 
-"""Reduce finite flags without a mask allocation; runs on the array's own device."""
+"""Scan host pixels without a mask; CuArray dispatch uses an explicitly freed device flag."""
 pixels_are_finite(image) = mapreduce(isfinite, &, image; init=true)
 
 """Report all non-finite pixels and the first (row, column, frame), in storage order."""
 function validate_finite_pixels(image)
   eltype(image) <: Integer && return nothing
   pixels_are_finite(image) && return nothing
-  affected = count(!isfinite, image)
-  index = Tuple(findfirst(!isfinite, image))
+  # Diagnostics are only needed on error. A host copy avoids GC-managed count and
+  # findfirst reduction buffers when the caller supplied a CuArray directly.
+  diagnostics = image isa CuArray ? Array(image) : image
+  affected = count(!isfinite, diagnostics)
+  index = Tuple(findfirst(!isfinite, diagnostics))
   row, col = index[1:2]
   frame = length(index) == 2 ? 1 : index[end]
   throw(ArgumentError("imagestack has $affected non-finite pixels; first (row, col, frame) = $((row, col, frame))"))
