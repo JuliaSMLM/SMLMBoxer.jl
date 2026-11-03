@@ -37,6 +37,49 @@ is_gpu_resource_error(e) = e isa CUDA.OutOfGPUMemoryError ||
      e.code in (CUDA.ERROR_OUT_OF_MEMORY, CUDA.ERROR_DEVICE_UNAVAILABLE))
 
 """
+    free_gpu_arrays(arrays...; failed=false)
+
+Explicitly free owned CuArray temporaries, ignoring CPU arrays and `nothing`. Never pass
+borrowed arrays. Attempt every free even if one fails; on an already failed operation,
+preserve its original exception instead of replacing it with a cleanup error.
+"""
+function free_gpu_arrays(arrays...; failed::Bool=false)
+    first_error = nothing
+    for array in arrays
+        array isa CuArray || continue
+        try
+            CUDA.unsafe_free!(array)
+        catch e
+            first_error === nothing && (first_error = e)
+        end
+    end
+    !failed && first_error !== nothing && throw(first_error)
+    return nothing
+end
+
+"""
+    release_gpu_memory()
+
+Return explicitly freed GPU allocations to the driver after a successful call, without
+running garbage collection. `RECLAIM_PURGE` is available from CUDA.jl 6.2, when the
+default `reclaim()` started running a full GC; purge caches between device synchronizations,
+then trim the pool. Synchronization must be blocking because CUDA.jl 6.5.0's event-based
+wait on driver 12.5 or later leaves asynchronously freed blocks unavailable to trimming.
+On CUDA.jl 5, 6.0 and 6.1, the default `reclaim()` has no full GC and is used as is.
+"""
+function release_gpu_memory()
+    if isdefined(CUDA, :RECLAIM_PURGE)
+        CUDA.device_synchronize(; blocking=true)
+        CUDA.reclaim(CUDA.RECLAIM_PURGE)
+        CUDA.device_synchronize(; blocking=true)
+        CUDA.trim(CUDA.memory_pool(CUDA.device()))
+    else
+        CUDA.reclaim()
+    end
+    return nothing
+end
+
+"""
     reclaim_failed_gpu_attempt()
 
 Try to release allocations after a failed GPU attempt. A poisoned CUDA context may make
@@ -46,6 +89,7 @@ function reclaim_failed_gpu_attempt()
     try
         GC.gc(false)
         CUDA.reclaim()
+        release_gpu_memory()
     catch
         # Cleanup must neither replace the original error nor prevent CPU fallback.
     end
@@ -119,43 +163,6 @@ when supported. Otherwise query CUDA on that device and restore the previous dev
 errors propagate.
 """
 gpu_free_memory(i::Integer) = @something(nvml_free_memory(i), cuda_free_memory(i))
-
-"""
-    find_best_gpu() -> Int
-
-Find the GPU with the most free memory and switch to it.
-
-Returns the CUDA ordinal (0-based). On single-GPU systems, returns 0 immediately.
-
-Uses NVML to query free memory on each device without creating CUDA contexts,
-avoiding `cuDevicePrimaryCtxRetain` OOM errors under multi-process contention.
-If NVML memory queries are not supported, temporarily activates each device to
-query CUDA instead. Otherwise only calls `CUDA.device!()` on the selected device.
-
-# Example
-```julia
-best = find_best_gpu()  # Switches to best GPU
-# Now all CUDA operations use that GPU
-```
-"""
-function find_best_gpu()
-    !CUDA.functional() && return 0
-    n = length(CUDA.devices())
-    n == 1 && return 0
-
-    # Prefer NVML to avoid creating CUDA contexts under contention
-    best, maxfree = 0, 0
-    for i in 0:(n-1)
-        free_mem = gpu_free_memory(i)
-        if free_mem > maxfree
-            maxfree, best = free_mem, i
-        end
-    end
-
-    CUDA.device!(best)
-    @info "Selected GPU $best with $(Base.format_bytes(maxfree)) free"
-    return best
-end
 
 """
     poll_gpu_nvml(required_bytes; timeout=30.0, poll=0.5, on_wait=nothing) -> (Bool, Int)
@@ -240,161 +247,6 @@ function poll_gpu_nvml(required_bytes::Integer;
     end
 
     return (false, -1)
-end
-
-"""
-    wait_for_gpu_memory(required_bytes; timeout=30.0, poll=0.5, on_wait=nothing) -> Bool
-
-Wait until current GPU device has sufficient available memory.
-Uses CUDA calls (requires active context). Used by :gpu mode after device selection.
-
-# Arguments
-- `required_bytes`: Minimum bytes needed (with safety margin applied internally)
-- `timeout`: Maximum seconds to wait (default 30.0, use Inf for unlimited)
-- `poll`: Seconds between checks (default 0.5)
-- `on_wait`: Optional callback(elapsed, available, required) called each poll
-
-# Returns
-- `true` if memory became available, `false` if timeout reached
-"""
-function wait_for_gpu_memory(required_bytes::Integer;
-        timeout::Real = 30.0,
-        poll::Real = 0.5,
-        on_wait = nothing)
-
-    required_with_margin = required_bytes * 1.5
-
-    deadline = time() + timeout
-    start = time()
-
-    while time() < deadline
-        CUDA.reclaim()
-
-        available = CUDA.free_memory()
-        if available >= required_with_margin
-            return true
-        end
-
-        if on_wait !== nothing
-            on_wait(time() - start, available, required_bytes)
-        end
-
-        sleep(poll * (1.0 + 0.2 * (rand() - 0.5)))
-    end
-
-    return false
-end
-
-"""
-    select_backend(backend::Symbol, required_bytes;
-                   auto_timeout=300.0, gpu_timeout=Inf, on_wait=nothing) -> (Symbol, Int)
-
-Select compute backend with two-layer GPU contention handling.
-
-Layer 1 (NVML polling): Scans all GPUs via NVML without creating CUDA contexts
-when supported. If NVML cannot report memory, queries CUDA on that device and
-skips its NVML contention checks. Polls through timeout with jittered backoff.
-First GPU with sufficient free memory and low contention wins.
-
-Layer 2 (runtime try/catch): Applied by `getboxes` for `:auto` and `:gpu` modes. GPU memory
-errors and an unavailable device retry with smaller batches until the timeout. Any other
-GPU failure uses the CPU at once under `:auto`, or raises at once under `:gpu`. On timeout,
-`:auto` falls back to the CPU and `:gpu` errors.
-
-# Arguments
-- `backend`: :cpu, :gpu, or :auto
-- `required_bytes`: Estimated GPU memory needed for processing
-- `auto_timeout`: Max wait for :auto mode before CPU fallback (default 300.0)
-- `gpu_timeout`: Max wait for :gpu mode (default Inf - wait forever)
-- `on_wait`: Optional callback(elapsed, available, required)
-
-# Returns
-- `(backend::Symbol, device_id::Int)` - selected backend and CUDA ordinal (0-based,
-  -1 for CPU)
-
-# Behavior
-- `:cpu` - Returns (:cpu, -1) immediately
-- `:gpu` - NVML poll for device, then CUDA wait_for_gpu_memory. Errors if unavailable/timeout
-- `:auto` - Poll with timeout; query errors or timeout fall back to (:cpu, -1) with warning
-"""
-function select_backend(backend::Symbol, required_bytes::Integer;
-        auto_timeout::Real = 300.0,
-        gpu_timeout::Real = Inf,
-        on_wait = nothing)
-
-    backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
-
-    if backend == :cpu
-        return (:cpu, -1)
-
-    elseif backend == :gpu
-        if !has_cuda() || !CUDA.functional()
-            error("GPU backend requested but CUDA is not functional")
-        end
-
-        # Poll to find an available device, preferring NVML
-        available, device_id = poll_gpu_nvml(required_bytes; timeout=gpu_timeout, on_wait=on_wait)
-        if !available
-            error("No GPU available after $(gpu_timeout)s. " *
-                  "Required: $(Base.format_bytes(required_bytes))")
-        end
-
-        # Activate chosen device and confirm memory via CUDA
-        CUDA.device!(device_id)
-        if !wait_for_gpu_memory(required_bytes; timeout=min(gpu_timeout, 10.0), on_wait=on_wait)
-            error("GPU $device_id memory not available. " *
-                  "Required: $(Base.format_bytes(required_bytes)), " *
-                  "Available: $(Base.format_bytes(CUDA.free_memory()))")
-        end
-        return (:gpu, device_id)
-
-    else  # :auto
-        if !has_cuda() || !CUDA.functional()
-            return (:cpu, -1)
-        end
-
-        # Poll all GPUs, falling back to CPU if the device query fails
-        available, device_id = try
-            poll_gpu_nvml(required_bytes; timeout=auto_timeout, on_wait=on_wait)
-        catch e
-            is_gpu_query_error(e) || rethrow()
-            @warn "GPU device query failed, using CPU" exception=(e, catch_backtrace())
-            return (:cpu, -1)
-        end
-        if available
-            CUDA.device!(device_id)
-            return (:gpu, device_id)
-        else
-            @warn "No GPU available after $(auto_timeout)s, using CPU. " *
-                  "Required: $(Base.format_bytes(required_bytes))"
-            return (:cpu, -1)
-        end
-    end
-end
-
-"""
-    estimate_gpu_memory(imagestack, camera) -> Int
-
-Estimate GPU memory required for processing imagestack.
-
-# Arguments
-- `imagestack`: Input image array (H, W, ..., F)
-- `camera`: Camera object (affects memory multiplier)
-
-# Returns
-- Estimated bytes needed for GPU processing
-
-# Memory Model
-Standard DoG path: 6x input size
-- Input, filtered_small, filtered_large, DoG result, localmax temps, GC margin
-
-Variance-weighted (SCMOSCamera): 8x input size
-- Additional workspace for per-pixel variance weighting (in-place DoG saves one copy)
-"""
-function estimate_gpu_memory(imagestack::AbstractArray, camera)
-    # Memory multiplier matches _getboxes_impl
-    n_copies = camera isa SCMOSCamera ? 8 : 6
-    return sizeof(imagestack) * n_copies
 end
 
 """

@@ -1,6 +1,6 @@
 name = "SMLMBoxer"
 uuid = "a7d3b33b-b840-4f8e-b556-99be03134090"
-version = "0.3.5-DEV"
+version = "0.4.0"
 authors = ["klidke@unm.edu"]
 
 [deps]
@@ -17,12 +17,15 @@ CUDA = "5.9, 6"
 Documenter = "1"
 ExplicitImports = "1"
 KernelAbstractions = "0.9.38 - 0.10"
+Markdown = "1"
+MicroscopePSFs = "0.5"
 NNlib = "0.9.25"
 Pkg = "1"
 PrecompileTools = "1"
 Printf = "1"
 Random = "1"
 SMLMData = "0.7"
+SMLMSim = "0.7"
 Statistics = "1"
 TOML = "1"
 Test = "1"
@@ -32,11 +35,17 @@ julia = "1.10"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
+Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
+MicroscopePSFs = "de9ac726-48a4-48ab-84b0-1c03c7c18929"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SMLMSim = "5a0a87e4-02d4-41f5-bf26-b8c94c784a04"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "Documenter", "ExplicitImports", "Pkg", "Printf", "Random", "TOML", "Test"]
+test = [
+    "Aqua", "Documenter", "ExplicitImports", "Markdown", "MicroscopePSFs", "Pkg",
+    "Printf", "Random", "SMLMSim", "TOML", "Test",
+]

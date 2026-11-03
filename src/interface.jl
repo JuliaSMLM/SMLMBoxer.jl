@@ -9,13 +9,16 @@ ROI batch with location tracking and processing metadata.
 - `camera::Union{AbstractCamera,Nothing}`: Optional camera object (IdealCamera or SCMOSCamera) from SMLMData.
   If not provided, an IdealCamera of the image's size with 1 um pixels is created
   (coordinates in um equal pixels).
+  The image's (rows, columns) must match the camera's pixel edges, otherwise raises
+  `DimensionMismatch`. Crop the camera together with the image.
 
 ## Primary Interface (Recommended - PSF-Aware)
 - `psf_sigma::Real`: PSF sigma in microns (physical units, e.g., 0.13 for 130nm PSF).
   Automatically converted to pixels using camera pixel size and sets optimal DoG filter parameters.
   **Requires camera to be provided.**
 - `min_photons::Real`: Minimum total photons for detection (default: 500.0).
-  Automatically converted to appropriate intensity threshold.
+  A noise-free, pixel-integrated Gaussian centered on a pixel just reaches the
+  threshold at this photon count. See `BoxerConfig` for subpixel-position effects.
 
 ## Advanced Interface (Direct Control)
 For expert users who want direct control over filter parameters:
@@ -26,11 +29,11 @@ For expert users who want direct control over filter parameters:
 Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 
 ## Other Parameters
-- `boxsize::Int`: Size of the box to cut out around each local maximum in pixels (default: 7).
+- `boxsize::Int`: ROI size in pixels, odd or even (default: 7).
 - `overlap::Real`: pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
   pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
-  not a bound on box overlap: with the defaults, neighbouring boxes can share 4 rows or
+  not a bound on box overlap: with the defaults, neighboring boxes can share 4 rows or
   columns.
 - `backend::Symbol`: Compute backend - `:cpu`, `:gpu`, or `:auto` (default: `:auto`).
   - `:cpu` - Always use CPU
@@ -83,8 +86,9 @@ When using the PSF-aware interface with `psf_sigma` (in microns):
 - psf_sigma is converted to pixels using camera pixel size
 - sigma_small = 1.0 × psf_sigma_pixels (matches PSF for optimal blob detection)
 - sigma_large = 2.0 × psf_sigma_pixels (background suppression)
-- minval is automatically calculated from min_photons accounting for PSF spreading, the DoG
-  response and, for an SCMOSCamera, the conversion to ADU (QE / gain)
+- minval uses the actual filter kernels' peak response to a pixel-integrated Gaussian
+  of min_photons photons, times effective gain (QE / gain for sCMOS). The sCMOS reference
+  uses uniform variance and its own Gaussian windows, so thresholds can differ by path.
 
 ## Variance-Weighted Filtering (sCMOS)
 
@@ -93,7 +97,8 @@ SMITE algorithm. Each pixel's contribution to the convolution is weighted by:
 
     weight = gaussian_kernel / variance
 
-where variance = readnoise². This implements optimal inverse variance weighting:
+where variance = (readnoise / gain)² in ADU², per pixel when either calibration is a map
+(gain in e⁻/ADU). This implements inverse variance weighting:
 - Low-noise pixels receive high weight (strong influence on detection)
 - High-noise pixels receive low weight (reduced influence, avoiding false positives)
 
@@ -110,8 +115,10 @@ The convolution runs as a KernelAbstractions kernel on the GPU, or via NNlib on 
 depending on `backend`. At image edges, each Gaussian is normalized by its in-bounds
 weights, as in the sCMOS path. Interior pixels retain the original convolution values.
 
-After filtering, local maxima above `minval` are identified. Boxes are cut
-out around each maximum, excluding overlaps.
+After filtering, local maxima above `minval` are identified. Maxima sharing a
+max-pool window have equal intensities; keep the earlier detection.
+Boxes use `clamp(center - (boxsize - 1) ÷ 2, 1, image_size - boxsize + 1)` on each axis.
+After clamping, only the brightest filtered detection per corner and frame is kept.
 
 # Examples
 ```julia
@@ -147,6 +154,16 @@ end
 ```
 """
 function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}, config::BoxerConfig)
+  if camera !== nothing
+    image_size = (size(imagestack, 1), size(imagestack, 2))
+    camera_size = (length(camera.pixel_edges_y) - 1, length(camera.pixel_edges_x) - 1)
+    image_size == camera_size || throw(DimensionMismatch(
+        "Image size $image_size does not match camera size $camera_size (rows, columns)"))
+  end
+
+  # Box extraction needs a host copy anyway; keep caller-owned GPU storage untouched
+  # and avoid allocating GPU conversion/reshape aliases outside batch cleanup.
+  imagestack = imagestack isa CuArray ? Array(imagestack) : imagestack
   # Convert to Float32 for type stability throughout pipeline
   imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
 
@@ -239,30 +256,37 @@ function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
   n_batches = cld(n_images, batch_size)
   memory_per_batch = batch_size * memory_per_frame
 
-  if n_batches == 1
-    filtered_stack = dog_filter(imagestack, args; use_gpu)
-    coords = findlocalmax(filtered_stack, kernelsize; minval=args.minval, use_gpu)
-  else
-    coords = Vector{Matrix{Float32}}(undef, 0)
-    for i in 1:n_batches
-      start_idx = (i - 1) * batch_size + 1
-      end_idx = min(i * batch_size, n_images)
-      batch = imagestack[:, :, :, start_idx:end_idx]
+  coords = Vector{Matrix{Float32}}(undef, 0)
+  for i in 1:n_batches
+    start_idx = (i - 1) * batch_size + 1
+    end_idx = min(i * batch_size, n_images)
+    batch = filtered_batch = nothing
+    local coords_batch
+    completed = false
+    try
+      batch = n_batches == 1 ? imagestack : imagestack[:, :, :, start_idx:end_idx]
       filtered_batch = dog_filter(batch, args; use_gpu)
       coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu)
+      completed = true
+    finally
+      free_gpu_arrays(filtered_batch, n_batches == 1 ? nothing : batch;
+        failed=!completed)
+    end
 
+    if n_batches == 1
+      coords = coords_batch
+    else
       # Offset frame indices to actual frame numbers.
       frame_offset = start_idx - 1
       for coord_matrix in coords_batch
         coord_matrix[:, 3] .+= frame_offset
       end
       append!(coords, coords_batch)
-
-      if batch_cleanup !== nothing
-        filtered_batch = nothing
-        batch = nothing
-        batch_cleanup()
-      end
+    end
+    if n_batches > 1 && batch_cleanup !== nothing
+      filtered_batch = nothing
+      batch = nothing
+      batch_cleanup()
     end
   end
   return coords, batch_size, n_batches, memory_per_batch
@@ -347,9 +371,7 @@ function _getboxes_impl(args::GetBoxesArgs)
         coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
           imagestack, args, kernelsize, max_free_mem;
           use_gpu=true, max_batch_frames=batch_cap)
-        CUDA.synchronize()
-        GC.gc(false)
-        CUDA.reclaim()
+        release_gpu_memory()
         device_id = dev_id
         actual_backend = :gpu
         gpu_succeeded = true
@@ -398,9 +420,7 @@ function _getboxes_impl(args::GetBoxesArgs)
 
   maxcoords = removeoverlap(coords, args)
 
-  # Ensure imagestack is on CPU for box extraction (uses scalar indexing)
-  imagestack_cpu = imagestack isa CuArray ? Array(imagestack) : imagestack
-  boxstack, boxcoords, camera_rois = getboxstack(imagestack_cpu, maxcoords, args)
+  boxstack, boxcoords = getboxstack(imagestack, maxcoords, args)
 
   # Create ROIBatch
   # Convert boxcoords (row, col, frame) to separate x_corners, y_corners vectors
@@ -434,4 +454,3 @@ function _getboxes_impl(args::GetBoxesArgs)
 
   return (roi_batch, info)
 end
-

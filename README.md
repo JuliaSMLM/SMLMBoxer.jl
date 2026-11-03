@@ -39,6 +39,13 @@ roi_batch.frame_indices  # source frame for each ROI
 
 For complete SMLM workflows (detection + fitting + rendering), see [SMLMAnalysis.jl](https://github.com/JuliaSMLM/SMLMAnalysis.jl).
 
+The image's (rows, columns) must match the camera's pixel edges; a mismatch raises
+`DimensionMismatch`. Use a camera cropped to the image's field of view.
+Every `boxsize >= 1`, odd or even, is supported when it fits the image. Corners use
+`clamp(center - (boxsize - 1) ÷ 2, 1, image_size - boxsize + 1)` on each axis.
+If edge clamping gives multiple detections the same corner in a frame, the brightest
+filtered detection supplies the single retained box.
+
 ## GPU Support
 
 | Hardware | `backend = :auto` | `backend = :gpu` |
@@ -70,11 +77,6 @@ Pkg.add(["SMLMBoxer", "Reactant"])
 using SMLMBoxer, Reactant
 ```
 
-With CUDA.jl 6.5.0, `CUDA.reclaim()` no longer returns freed pool memory to the driver.
-After GPU `getboxes`, the process keeps its peak GPU memory reserved until it exits.
-Later calls in that process reuse it; other processes cannot use it. CUDA.jl 6.4 and
-earlier release it.
-
 GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-process environments. See the [API docs](https://JuliaSMLM.github.io/SMLMBoxer.jl/dev/api/) for details.
 
 ## Detection Modes
@@ -85,6 +87,8 @@ GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-p
 | Variance-weighted DoG | `SCMOSCamera` | Inverse-variance weighting via KernelAbstractions | Spatially-varying readnoise |
 
 Variance weighting is automatic when an `SCMOSCamera` is provided — low-noise pixels get high weight, high-noise pixels get reduced influence.
+The variance is `(readnoise / gain)^2` in ADU², evaluated per pixel when either
+calibration is a map; SMLMData's gain is in e⁻/ADU.
 
 ## Parameter Interfaces
 
@@ -108,6 +112,18 @@ roi_batch, info = getboxes(imagestack, camera, BoxerConfig(
 ```
 
 A kwargs interface is also available for one-off calls: `getboxes(imagestack, camera; psf_sigma=0.13, min_photons=500.0)`.
+
+`min_photons` sets the filtered peak of a noise-free, pixel-integrated Gaussian spot:
+a spot with that many photons centered on a pixel just reaches the threshold. See
+`BoxerConfig` for subpixel-position effects. The threshold uses the actual
+filter kernels (uniform variance for sCMOS) and effective gain, so the camera paths
+can give slightly different thresholds. Noise and spatially varying calibration affect
+which real spots pass it.
+
+`overlap` sets the local-maximum window `k = max(3, floor(Int, boxsize - overlap))`.
+Detections are at least `cld(k, 2)` pixels apart along either axis; raising `overlap`
+allows closer neighbors. Detections sharing a window have equal intensities;
+the earlier detection is kept.
 
 ## Output Format
 
@@ -147,38 +163,50 @@ first_roi = roi_batch[1]
 
 ## Performance
 
-Benchmarked on AMD Ryzen 9 5950X (32 threads) / NVIDIA RTX 4090, SMLMBoxer 0.3.4, CUDA.jl 6.5.0,
-KernelAbstractions 0.10.4 (images/s, whole `getboxes` call):
+Benchmarked on AMD Ryzen 9 5950X (32 threads) / NVIDIA RTX 4090, SMLMBoxer 0.4.0,
+CUDA.jl 6.5.0, KernelAbstractions 0.10.4 (images/s, whole `getboxes` call):
 
 The CPU columns use 32 threads; start Julia with `--threads=auto` for the 32-thread
 speed. Plain `julia` runs one thread.
 
 | Image Size | Frames | Ideal CPU | Ideal GPU | sCMOS CPU | sCMOS GPU |
 |------------|-------:|----------:|----------:|----------:|----------:|
-| 128×128 | 10 | 1,671 | 166 | 328 | 162 |
-| 128×128 | 500 | 2,837 | 6,660 | 335 | 6,011 |
-| 256×256 | 10 | 725 | 157 | 87 | 164 |
-| 256×256 | 500 | 945 | 5,329 | 80 | 4,340 |
-| 512×512 | 10 | 248 | 164 | 25 | 155 |
-| 512×512 | 500 | 299 | 3,113 | 25 | 2,020 |
+| 128×128 | 1 | 270 | 2,011 | 317 | 2,583 |
+| 128×128 | 10 | 1,155 | 19,858 | 325 | 16,571 |
+| 128×128 | 500 | 2,754 | 49,095 | 284 | 36,262 |
+| 256×256 | 1 | 256 | 1,558 | 49 | 2,357 |
+| 256×256 | 10 | 963 | 10,417 | 81 | 10,233 |
+| 256×256 | 500 | 876 | 13,805 | 76 | 10,643 |
+| 512×512 | 1 | 188 | 1,954 | 23 | 961 |
+| 512×512 | 10 | 260 | 4,420 | 21 | 2,492 |
+| 512×512 | 500 | 262 | 4,317 | 19 | 2,973 |
 
 With one CPU thread, 10 frames and the CUDA.jl 6.5.0 environment (images/s):
 
 | Image Size | Ideal CPU (1 thread) | sCMOS CPU (1 thread) |
 |------------|---------------------:|--------------------:|
-| 128×128 | 630 | 36 |
-| 256×256 | 162 | 9 |
-| 512×512 | 46 | 2 |
+| 128×128 | 543 | 34 |
+| 256×256 | 150 | 8 |
+| 512×512 | 40 | 2 |
 
-Every GPU call has a fixed cost of about 60 ms, mostly releasing the GPU memory pool
-after the call, whatever the stack size, so GPU throughput depends on stack length.
-At 256×256 with an IdealCamera, the CPU and GPU break even at about 10 frames on one
-CPU thread and about 50 frames on 32 threads; below that use `backend = :cpu` if speed
-matters. On 500 frames, compared with 32 CPU threads, the GPU is about 2-10x faster
-with an IdealCamera and about 20-80x faster with an SCMOSCamera. 0.3.3 has the same
-fixed cost.
+After warmup, a 256×256×10 GPU call takes about 0.75 ms on the RTX 4090, down from
+about 57 ms in 0.3.4 (medians of 0.73–0.84 ms across CUDA.jl 6.4.2 and 6.5.0).
+The GPU wins from one frame at every size tested (128, 256 and 512 px), with either
+camera path and either one or 32 CPU threads on this machine.
 
-Standard DoG uses NNlib on CPU and a KernelAbstractions kernel on GPU; variance-weighted sCMOS uses KernelAbstractions custom kernels on both. Run `GROUP=Long julia --project -e 'using Pkg; Pkg.test("SMLMBoxer")'` locally to benchmark your hardware.
+Under CUDA.jl 6.2 and later, 0.3.4 spent about 60 ms per GPU call in a full garbage
+collection inside `CUDA.reclaim()`. 0.4.0 frees its GPU arrays as soon as each batch is done and releases
+memory without a full garbage collection. On 500 frames at 256×256, IdealCamera GPU
+throughput increases from 5,329 to 13,805 images/s.
+
+Release after a short call takes about 0.02 ms on the RTX 4090; returning
+2 GiB to the driver takes about 42 ms. On CUDA.jl 5.9 to 6.5.0, the process is
+back within 64 MiB of its baseline after a call.
+
+Standard DoG uses NNlib on CPU and a KernelAbstractions kernel on GPU;
+variance-weighted sCMOS uses KernelAbstractions custom kernels on both. Run
+`GROUP=Long julia --project -e 'using Pkg; Pkg.test("SMLMBoxer")'` locally to benchmark
+your hardware.
 
 ## Algorithm Reference
 

@@ -81,6 +81,9 @@ println("First detection at ($(first_roi.corner[1]), $(first_roi.corner[2]))")
 
 This example demonstrates variance-weighted detection for sCMOS cameras with spatially-varying noise.
 
+Variance weights use `(readnoise / gain)^2` in ADU², per pixel when either calibration
+is a map. The image dimensions must match the camera's pixel edges.
+
 ### Creating sCMOS Camera
 
 ```julia
@@ -219,11 +222,16 @@ end
 
 ### Short stacks
 
-The fixed cost per GPU call was about 60 ms on an RTX 4090, mostly releasing the GPU
-memory pool after the call, whatever the stack size. GPU throughput therefore depends
-on stack length. At 256×256 with an IdealCamera, the CPU and GPU break even at about
-10 frames on one CPU thread and about 50 frames on 32 threads; below that use
-`backend = :cpu` if speed matters. 0.3.3 has the same fixed cost.
+After warmup, a 256×256×10 GPU call takes about 0.75 ms on the RTX 4090 in 0.4.0,
+down from about 57 ms in 0.3.4 (medians of 0.73–0.84 ms across CUDA.jl 6.4.2 and
+6.5.0). The GPU wins from one frame at every size tested (128, 256 and 512 px), with
+either camera path and either one or 32 CPU threads on the AMD Ryzen 9 5950X.
+
+GPU arrays are freed as soon as each batch is done, and the release after a successful
+call no longer runs a full garbage collection. Release after a short call takes
+about 0.02 ms on the RTX 4090; returning 2 GiB to the driver takes
+about 42 ms. On CUDA.jl 5.9 to 6.5.0, the process is back within 64 MiB of
+its baseline after a call.
 
 ### Large Dataset Processing
 

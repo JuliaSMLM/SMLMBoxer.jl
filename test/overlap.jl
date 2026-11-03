@@ -1,9 +1,11 @@
 using Test, SMLMBoxer
 using Random
 
-# Preserve the original implementation to check arithmetic and visiting order.
-function removeoverlap_reference(coords::Vector{Matrix{Float32}}, kwargs::SMLMBoxer.GetBoxesArgs)
-    overlap = kwargs.overlap
+# Independent allocating reference for the max-pool separation and visiting order.
+function removeoverlap_reference(coords::Vector{Matrix{Float32}},
+        kwargs::SMLMBoxer.GetBoxesArgs)
+    k = max(3, floor(Int, kwargs.boxsize - kwargs.overlap))
+    separation = cld(k, 2)
     for f in eachindex(coords)
         ncoords = size(coords[f], 1)
         keep = trues(ncoords)
@@ -14,9 +16,9 @@ function removeoverlap_reference(coords::Vector{Matrix{Float32}}, kwargs::SMLMBo
                 for j in (i+1):ncoords
                     if keep[j]
                         cj = coords[f][j, :]
-                        dist = sqrt(sum((ci[1:2] - cj[1:2]) .^ 2)) # Only compare the x and y coordinates
-                        if dist <= overlap
-                            if ci[4] < cj[4] # Use the 4th column of ci and cj for intensity comparison
+                        distance = maximum(abs.(ci[1:2] - cj[1:2]))
+                        if distance < separation
+                            if ci[4] < cj[4]
                                 keep[i] = false
                                 break
                             else
@@ -29,7 +31,7 @@ function removeoverlap_reference(coords::Vector{Matrix{Float32}}, kwargs::SMLMBo
         end
         coords[f] = coords[f][keep, :]
     end
-    return vcat(coords...)[:, 1:3]
+    return vcat(coords...)
 end
 
 overlap_args(overlap) = SMLMBoxer.GetBoxesArgs(
@@ -52,7 +54,7 @@ end
         ) for (f, n) in enumerate(counts)
     ]
 
-    # A overlaps B and B overlaps C, but A does not overlap C at distance 1.
+    # At separation 2, A shares B's window and B shares C's, but A does not share C's.
     # Equal intensities, a brighter middle box, and a brighter last box exercise
     # the tie rule, skipped boxes, and the break when i is dropped.
     chains = [
@@ -75,24 +77,29 @@ end
         check_overlap_reference([zeros(Float32, 0, 4) for _ in 1:4], overlap)
     end
 
-    # Noninteger Float32 positions exercise rounding in the distance calculation.
+    # Noninteger Float32 positions also obey Chebyshev separation.
     fractional = [hcat(rand(rng, Float32, 100, 2) .* 10, ones(Float32, 100, 2))]
     for overlap in (sqrt(2.0), 2.5)
         check_overlap_reference(fractional, overlap)
     end
 
-    @test SMLMBoxer.removeoverlap(deepcopy(chains), overlap_args(1)) ==
-        Float32[0 0 1; 2 0 1; 1 0 2; 0 0 3; 2 0 3; -1 0 4]
+    @test SMLMBoxer.removeoverlap(deepcopy(chains), overlap_args(3)) ==
+        Float32[0 0 1 2; 2 0 1 2; 1 0 2 3; 0 0 3 2; 2 0 3 3; -1 0 4 3]
 
-    # sqrt(2) is rounded to Float32 by GetBoxesArgs, exactly as in getboxes.
+    # The boundary is strict, for both odd and even max-pool windows.
     diagonal = [Float32[0 0 1 2; 1 1 1 2]]
-    @test SMLMBoxer.removeoverlap(deepcopy(diagonal), overlap_args(sqrt(2.0))) ==
-        Float32[0 0 1]
+    @test SMLMBoxer.removeoverlap(deepcopy(diagonal), overlap_args(3)) ==
+        Float32[0 0 1 2]
+    boundary = [Float32[0 0 1 2; 2 2 1 2]]
+    for overlap in (3, 4)
+        @test SMLMBoxer.removeoverlap(deepcopy(boundary), overlap_args(overlap)) ==
+            boundary[1]
+    end
 end
 
 @testset "Overlap removal allocations" begin
     # Keep all 600 boxes so every pair is visited and output sizes are stable.
-    coords = [hcat(Float32.(1:600), zeros(Float32, 600), ones(Float32, 600, 2))]
+    coords = [hcat(Float32.(1:4:2400), zeros(Float32, 600), ones(Float32, 600, 2))]
     args = overlap_args(0)
     SMLMBoxer.removeoverlap(deepcopy(coords), args)
     input = deepcopy(coords)

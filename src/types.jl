@@ -11,7 +11,11 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 ## PSF-Aware Interface (Recommended)
 - `psf_sigma::Union{Float64,Nothing}`: PSF sigma in microns (e.g., 0.13 for 130nm PSF).
   Requires camera for pixel conversion. When set, overrides sigma_small/sigma_large/minval.
-- `min_photons::Float64`: Minimum photons for detection (default: 500.0)
+- `min_photons::Float64`: Photon threshold (default: 500.0). A noise-free,
+  pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
+  photon count. A spot centered on a pixel corner needs more photons, about 1.1× at a
+  PSF sigma of 1.35 pixels (0.135 µm on 0.1 µm pixels), 1.2× at 1 pixel and
+  1.5× at 0.7 pixel.
 
 ## Advanced Interface (Direct Control)
 - `sigma_small::Float64`: Small Gaussian sigma in pixels (default: 1.0)
@@ -19,11 +23,11 @@ Use either PSF-aware interface (psf_sigma + min_photons) or advanced interface
 - `minval::Float64`: DoG intensity threshold (default: 0.0)
 
 ## Box Parameters
-- `boxsize::Int`: ROI box size in pixels (default: 7)
+- `boxsize::Int`: ROI box size in pixels, odd or even (default: 7)
 - `overlap::Float64`: pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
   pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
-  not a bound on box overlap: with the defaults, neighbouring boxes can share 4 rows or
+  not a bound on box overlap: with the defaults, neighboring boxes can share 4 rows or
   columns.
 
 ## Backend Parameters
@@ -160,7 +164,8 @@ function get_effective_gain(camera::SCMOSCamera)
 end
 
 """
-    photons_to_dog_threshold(min_photons, psf_sigma; effective_gain=1.0)
+    photons_to_dog_threshold(min_photons, psf_sigma; effective_gain=1.0,
+                             variance_weighted=false)
 
 Convert total photon count threshold to DoG filter intensity threshold in image units (ADU).
 
@@ -169,43 +174,62 @@ Convert total photon count threshold to DoG filter intensity threshold in image 
 - `psf_sigma`: PSF sigma in pixels
 - `effective_gain`: ADU per photon: 1 for an image in photons, QE / gain for an SCMOSCamera
   (gain in e⁻/ADU; see [`get_effective_gain`](@ref)). Default 1.0.
+- `variance_weighted`: Use the sCMOS Gaussian windows under uniform variance.
 
 # Returns
 - `minval`: DoG filter intensity threshold in image units (ADU)
 
-# Physics
-For a 2D Gaussian PSF with total photons N and sigma σ_psf, the peak intensity is:
-    I_peak = N / (2π σ_psf²)  [photons/pixel]
-
-After convolution with the small Gaussian filter (sigma_small = 1.0 × psf_sigma),
-the effective sigma becomes:
-    σ_eff = √(σ_psf² + sigma_small²)
-
-The peak after filtering is:
-    I_filtered = N / (2π σ_eff²)  [photons/pixel]
-
-The DoG response (small - large Gaussian) has a lower peak than the small Gaussian alone.
-For sigma_large = 2×sigma_small, the DoG peak is approximately 0.65× the small Gaussian peak.
-
-For raw camera data in ADU the threshold is multiplied by effective_gain = QE / gain.
+# Calibration
+The threshold is the peak response of this path's actual normalized Gaussian kernels
+to a noise-free, pixel-integrated Gaussian of `min_photons` photons centered on a pixel,
+times effective gain. See `BoxerConfig` for subpixel-position effects.
+The standard path uses `dog_kernel_pair`; the sCMOS reference uses its own windows
+under uniform variance. Spatially varying calibration and noise affect real detections.
 """
-function photons_to_dog_threshold(min_photons::Real, psf_sigma::Real; effective_gain::Real=1.0)
-    # DoG filter uses sigma_small = 1.0 × psf_sigma
-    sigma_small = 1.0 * psf_sigma
+function photons_to_dog_threshold(min_photons::Real, psf_sigma::Real;
+        effective_gain::Real=1.0, variance_weighted::Bool=false)
+    sigma_small, sigma_large = Float32(psf_sigma), Float32(2 * psf_sigma)
+    if variance_weighted
+        kernel_small = gaussian_2d(sigma_small,
+            2 * variance_gaussian_window(sigma_small) + 1)
+        kernel_large = gaussian_2d(sigma_large,
+            2 * variance_gaussian_window(sigma_large) + 1)
+    else
+        kernel_small, kernel_large = dog_kernel_pair(sigma_small, sigma_large)
+    end
 
-    # Effective sigma after small Gaussian blur (convolution of two Gaussians)
-    σ_eff = sqrt(psf_sigma^2 + sigma_small^2)
+    # Separable pixel integrals, evaluated with composite Simpson quadrature.
+    # At least 32 intervals per pixel and 16 per sigma resolve narrow spots as well.
+    sigma = Float64(psf_sigma)
+    intervals = max(32, 2 * ceil(Int, 8 / sigma))
+    radius = max(size(kernel_small, 1), size(kernel_large, 1)) ÷ 2
+    masses = [gaussian_pixel_mass(i, sigma, intervals) for i in -radius:radius]
+    response = gaussian_spot_response(kernel_small, masses) -
+        gaussian_spot_response(kernel_large, masses)
+    return Float32(min_photons * effective_gain * response)
+end
 
-    # Peak intensity after small Gaussian filtering (in photons)
-    peak_filtered_photons = min_photons / (2π * σ_eff^2)
+"""Integrate a unit Gaussian over one pixel using an even number of Simpson intervals."""
+function gaussian_pixel_mass(offset::Int, sigma::Float64, intervals::Int)
+    left = offset - 0.5
+    density(x) = exp(-x^2 / (2 * sigma^2)) / (sqrt(2π) * sigma)
+    total = density(left) + density(left + 1)
+    for i in 1:intervals-1
+        total += (isodd(i) ? 4 : 2) * density(left + i / intervals)
+    end
+    return total / (3 * intervals)
+end
 
-    # Convert to image units (ADU) using camera gain
-    peak_filtered = peak_filtered_photons * effective_gain
-
-    # DoG reduces peak (empirical factor for sigma_large = 2×sigma_small)
-    dog_factor = 0.65
-
-    return Float32(dog_factor * peak_filtered)
+"""Return a normalized Gaussian kernel's response to separable pixel masses."""
+function gaussian_spot_response(kernel, masses)
+    radius = size(kernel, 1) ÷ 2
+    center = (length(masses) + 1) ÷ 2
+    response = 0.0
+    for j in axes(kernel, 2), i in axes(kernel, 1)
+        response += kernel[i, j] * masses[center + i - radius - 1] *
+            masses[center + j - radius - 1]
+    end
+    return response
 end
 
 """
@@ -217,13 +241,15 @@ keyword arguments rather than constructing this directly.
 # Primary Interface (Recommended)
 - `psf_sigma::Real`: PSF sigma in microns (physical units, e.g., 0.13 for 130nm PSF)
   Requires camera to be provided for pixel size conversion.
-- `min_photons::Real`: Minimum total photons for detection (default: 500.0)
+- `min_photons::Real`: Photon threshold (default: 500.0). A noise-free,
+  pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
+  photon count. See `BoxerConfig` for subpixel-position effects.
 
 When psf_sigma is provided:
 - Converted to pixels using camera pixel size
 - sigma_small = 1.0 × psf_sigma_pixels (automatically calculated)
 - sigma_large = 2.0 × psf_sigma_pixels (automatically calculated)
-- minval = photons_to_dog_threshold(min_photons, psf_sigma_pixels) (automatically calculated)
+- minval from the actual filter kernels and effective gain (uniform variance for sCMOS)
 
 # Advanced Interface (Direct Control)
 - `sigma_small::Real`: Small Gaussian sigma in pixels (default: 1.0)
@@ -233,11 +259,11 @@ When psf_sigma is provided:
 # Other Parameters
 - `imagestack`: Input image stack
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
-- `boxsize::Int`: ROI box size in pixels (default: 7)
+- `boxsize::Int`: ROI box size in pixels, odd or even (default: 7)
 - `overlap::Real`: pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
   pixels apart along x or y. A larger `overlap` lets detections sit closer together. This is
-  not a bound on box overlap: with the defaults, neighbouring boxes can share 4 rows or
+  not a bound on box overlap: with the defaults, neighboring boxes can share 4 rows or
   columns.
 - `backend::Symbol`: Compute backend :cpu, :gpu, or :auto (default: :auto)
 - `auto_timeout::Real`: Max wait seconds for :auto mode before CPU fallback (default: 300.0)
@@ -289,7 +315,8 @@ mutable struct GetBoxesArgs
             σ_small = Float32(1.0 * psf_sigma_pixels)
             σ_large = Float32(2.0 * psf_sigma_pixels)
             effective_gain = get_effective_gain(camera)
-            min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels; effective_gain=effective_gain)
+            min_val = photons_to_dog_threshold(min_photons, psf_sigma_pixels;
+                effective_gain, variance_weighted=camera isa SCMOSCamera)
         else
             # Direct control interface
             σ_small = Float32(sigma_small !== nothing ? sigma_small : 1.0)
@@ -309,74 +336,6 @@ mutable struct GetBoxesArgs
 end
 
 """
-    pixels_to_microns(pixel_coords, camera::AbstractCamera)
-
-Convert pixel coordinates (row, col) to micron coordinates (x, y) using camera geometry.
-
-# Arguments
-- `pixel_coords`: N×2 matrix of (row, col) coordinates
-- `camera`: Camera object with pixel_edges_x and pixel_edges_y
-
-# Returns
-- N×2 matrix of (x, y) coordinates in microns
-"""
-function pixels_to_microns(pixel_coords::AbstractMatrix, camera::AbstractCamera)
-    ncoords = size(pixel_coords, 1)
-    coords_microns = similar(pixel_coords)
-
-    for i in 1:ncoords
-        row, col = pixel_coords[i, 1], pixel_coords[i, 2]
-        # Convert to 1-based pixel centers
-        # pixel_edges are the edges, so center of pixel i is at (edges[i] + edges[i+1])/2
-        x = (camera.pixel_edges_x[Int(col)] + camera.pixel_edges_x[Int(col)+1]) / 2
-        y = (camera.pixel_edges_y[Int(row)] + camera.pixel_edges_y[Int(row)+1]) / 2
-        coords_microns[i, 1] = x
-        coords_microns[i, 2] = y
-    end
-
-    return coords_microns
-end
-
-"""
-    extract_camera_roi(camera::AbstractCamera, row_range, col_range)
-
-Extract a camera ROI with calibration data for the specified pixel region.
-
-# Arguments
-- `camera`: Source camera object
-- `row_range`: Range of rows to extract
-- `col_range`: Range of columns to extract
-
-# Returns
-- Camera object of the same type with ROI calibration data
-"""
-function extract_camera_roi(camera::IdealCamera{T}, row_range, col_range) where T
-    return IdealCamera(
-        camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
-        camera.pixel_edges_y[row_range]   # pixel_edges_y (positional)
-    )
-end
-
-function extract_camera_roi(camera::SCMOSCamera{T}, row_range, col_range) where T
-    # Handle both scalar and per-pixel calibration parameters
-    # SMLMData 0.6+: SCMOSCamera calibration arrays use (ny, nx) = (rows, cols) convention
-    # This matches Julia's standard image indexing: array[row, col]
-    offset = camera.offset isa AbstractArray ? camera.offset[row_range[1:end-1], col_range[1:end-1]] : camera.offset
-    gain = camera.gain isa AbstractArray ? camera.gain[row_range[1:end-1], col_range[1:end-1]] : camera.gain
-    readnoise = camera.readnoise isa AbstractArray ? camera.readnoise[row_range[1:end-1], col_range[1:end-1]] : camera.readnoise
-    qe = camera.qe isa AbstractArray ? camera.qe[row_range[1:end-1], col_range[1:end-1]] : camera.qe
-
-    return SCMOSCamera(
-        camera.pixel_edges_x[col_range],  # pixel_edges_x (positional)
-        camera.pixel_edges_y[row_range],  # pixel_edges_y (positional)
-        readnoise = readnoise,
-        offset = offset,
-        gain = gain,
-        qe = qe
-    )
-end
-
-"""
     get_variance_map(camera::AbstractCamera, imagesize)
 
 Compute variance map from camera calibration.
@@ -386,7 +345,8 @@ Compute variance map from camera calibration.
 - `imagesize`: Tuple of (nrows, ncols) for the image
 
 # Returns
-- Variance map (variance = readnoise²) matching image dimensions
+- Variance map in ADU²: `(readnoise / gain)^2`, per pixel when either is a map.
+  Image and camera dimensions must already match (checked by `getboxes`).
 """
 function get_variance_map(camera::IdealCamera{T}, imagesize::Tuple{Int,Int}) where T
     # IdealCamera has no readnoise, return uniform variance of 1.0
@@ -395,22 +355,11 @@ function get_variance_map(camera::IdealCamera{T}, imagesize::Tuple{Int,Int}) whe
 end
 
 function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int,Int}) where T
-    nrows, ncols = imagesize
-
-    if camera.readnoise isa AbstractArray
-        # Per-pixel readnoise map: variance = readnoise²
-        variance_map = camera.readnoise .^ 2
-        # SMLMData 0.6+: readnoise uses (ny, nx) = (rows, cols), matching image convention
-        # Defensive transpose for legacy data with inverted convention
-        if size(variance_map) == (ncols, nrows) && ncols != nrows
-            variance_map = transpose(variance_map)
-        end
-        @assert size(variance_map) == imagesize "Readnoise map size $(size(variance_map)) doesn't match image size $imagesize"
-        # Convert to Float32 to match imagestack type (getboxes converts all images to Float32)
-        return Float32.(collect(variance_map))
+    # SMLMData stores gain in e⁻/ADU and readnoise in e⁻, in (rows, cols) order.
+    if camera.readnoise isa AbstractArray || camera.gain isa AbstractArray
+        return Float32.((camera.readnoise ./ camera.gain).^2)
     else
-        # Scalar readnoise: uniform variance (always Float32 to match imagestack)
-        return fill(Float32(camera.readnoise^2), imagesize)
+        return fill(Float32((camera.readnoise / camera.gain)^2), imagesize)
     end
 end
 
@@ -457,6 +406,7 @@ for chunk_start in 1:max_frames:total_frames
     chunk_end = min(chunk_start + max_frames - 1, total_frames)
     imagestack = load_frames(chunk_start:chunk_end)
     (roi_batch, info) = getboxes(imagestack, camera; psf_sigma=0.13)
+    roi_batch.frame_indices .+= chunk_start - 1
     # ... process results
 end
 ```
