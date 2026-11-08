@@ -220,8 +220,7 @@ memory without a full garbage collection. On 500 frames at 256×256, IdealCamera
 throughput increases from 5,329 to 13,805 images/s.
 
 Release after a short call takes about 0.02 ms on the RTX 4090; returning
-2 GiB to the driver takes about 42 ms. On CUDA.jl 5.9 to 6.5.0, the process is
-back within 64 MiB of its baseline after a call.
+2 GiB to the driver takes about 42 ms.
 
 Standard DoG uses NNlib on CPU and a KernelAbstractions kernel on GPU;
 variance-weighted sCMOS uses KernelAbstractions custom kernels on both. Run

@@ -234,8 +234,7 @@ either camera path and either one or 32 CPU threads on the AMD Ryzen 9 5950X.
 GPU arrays are freed as soon as each batch is done, and the release after a successful
 call no longer runs a full garbage collection. Release after a short call takes
 about 0.02 ms on the RTX 4090; returning 2 GiB to the driver takes
-about 42 ms. On CUDA.jl 5.9 to 6.5.0, the process is back within 64 MiB of
-its baseline after a call.
+about 42 ms.
 
 ### Large Dataset Processing
 

@@ -479,8 +479,7 @@ Implements optimal inverse variance weighting for spatially-varying noise.
   default `reclaim()` started running a full GC. CUDA.jl 5, 6.0 and 6.1 use their GC-free
   `CUDA.reclaim()`. Failed attempts use `GC.gc(false)`, `CUDA.reclaim()` and
   `release_gpu_memory()`. Release after a short call takes about 0.02 ms on the
-  RTX 4090; returning 2 GiB to the driver takes about 42 ms. On CUDA.jl 5.9 to
-  6.5.0, the process is back within 64 MiB of its baseline after a call.
+  RTX 4090; returning 2 GiB to the driver takes about 42 ms.
 - **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting
 - **Typical Speedup**: A warmed-up 256×256×10 GPU call takes about 0.75 ms in 0.4.0,
