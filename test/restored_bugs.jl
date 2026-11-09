@@ -154,22 +154,37 @@ end
         # Uniform cameras stored in Float32: rounding of the stored edges alone makes widths of a
         # 2048-pixel camera differ by more than 1e-4 relative; they are uniform and are accepted.
         for p in (0.1f0, 0.065f0), cam in (IdealCamera(2048, 2048, p), SCMOSCamera(2048, 2048, p, 1.6f0))
-            @test SMLMBoxer.get_pixel_size(cam) ≈ p rtol=1e-3
+            @test SMLMBoxer.get_pixel_size(cam) ≈ p rtol=1e-6
         end
-        large = IdealCamera(2048, 2048, 0.1f0)
-        @test length(first(getboxes(zeros(Float32, 2048, 2048, 1), large; psf_sigma=0.13,
-            backend=:cpu))) == 0
+        # Far from the origin the first width is off by 6e-4 of a pixel; the pitch comes from the
+        # span, and a spot simulated there is found.
+        far = Float32.(1000 .+ (0:33) .* 0.1)
+        far_camera = IdealCamera(far, far)
+        @test SMLMBoxer.get_pixel_size(far_camera) ≈ 0.1 rtol=1e-5
+        far_spot = Emitter2DFit{Float64}(1001.65, 1001.65, 2000., 0., 0., 0., 0., 0.; frame=1)
+        far_image, _ = gen_images(BasicSMLD([far_spot], far_camera, 1, 1), GaussianPSF(0.13);
+            threaded=false, sampling=32)
+        rois, _ = getboxes(Float32.(far_image), far_camera; psf_sigma=0.13, backend=:cpu)
+        @test length(rois) == 1
+        # The rounding allowance applies within an axis only: pixels that differ between x and y
+        # are still refused, however the camera is stored.
+        for cam in (IdealCamera(2048, 2048, (0.1f0, 0.10002f0)),
+                    SCMOSCamera(2048, 2048, (0.1f0, 0.10002f0), 1.6f0),
+                    IdealCamera(1024, 1024, (Float16(0.0625), Float16(0.125))))
+            argument_message(() -> SMLMBoxer.get_pixel_size(cam), "square")
+        end
     end
 
     @testset "Low-precision sCMOS calibration does not overflow the variance" begin
-        # (readnoise / qe)^2 = 160,000 photons² is above Float16's largest value.
+        # (readnoise / qe)^2 and (readnoise / gain)^2 = 160,000 are above Float16's largest value.
         for mapped in (false, true)
             noise = mapped ? fill(Float16(20), 9, 9) : Float16(20)
-            cam = SCMOSCamera(9, 9, Float16(0.125), noise; gain=Float16(0.5), qe=Float16(0.05))
-            for (photons, expected) in ((true, 160_000), (false, 1_600))
+            divisor = mapped ? fill(Float16(0.05), 9, 9) : Float16(0.05)
+            cam = SCMOSCamera(9, 9, Float16(0.125), noise; gain=divisor, qe=divisor)
+            for photons in (true, false)
                 variance = SMLMBoxer.get_variance_map(cam, (9, 9); photons)
                 @test all(isfinite, variance)
-                @test variance[5, 5] ≈ expected rtol=1e-3
+                @test variance[5, 5] ≈ 160_000 rtol=1e-3
             end
         end
     end

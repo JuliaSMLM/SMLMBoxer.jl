@@ -196,30 +196,46 @@ end
     get_pixel_size(camera::AbstractCamera)
 
 Extract pixel size in microns for PSF-aware detection. Every pixel must be square
-and uniformly sized (relative tolerance 1e-4, plus the rounding of the camera's
-stored edge values); otherwise use direct pixel sigmas.
+and uniformly sized (relative tolerance 1e-4); otherwise use direct pixel sigmas.
+The size is each axis's span divided by its pixel count, in Float64.
 
 # Arguments
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
 
 # Returns
-- Pixel size in microns (x-direction)
+- Pixel size in microns (x-direction), Float64
 """
 function get_pixel_size(camera::AbstractCamera)
-    edges_x, edges_y = camera.pixel_edges_x, camera.pixel_edges_y
-    pixel_size = edges_x[2] - edges_x[1]
-    widths_x, widths_y = diff(edges_x), diff(edges_y)
-    narrowest = min(minimum(widths_x), minimum(widths_y))
-    widest = max(maximum(widths_x), maximum(widths_y))
-    # Each stored edge is rounded to its own precision, so two widths of a uniform camera can
-    # differ by about twice the floating-point spacing at the largest edge: for 2048 Float32
-    # pixels of 0.1 µm, about 3e-5 µm, which is 3e-4 of a pixel.
-    rounding = 4 * max(eps(float(maximum(abs, edges_x))), eps(float(maximum(abs, edges_y))))
-    isfinite(narrowest) && narrowest > 0 && isfinite(widest) &&
-        isapprox(narrowest, widest; rtol=1e-4, atol=rounding) ||
+    pitch_x = uniform_pitch(camera.pixel_edges_x)
+    pitch_y = uniform_pitch(camera.pixel_edges_y)
+    pitch_x !== nothing && pitch_y !== nothing && isapprox(pitch_x, pitch_y; rtol=1e-4) ||
         throw(ArgumentError("psf_sigma requires uniform square pixels (relative tolerance 1e-4); " *
             "this camera can use sigma_small/sigma_large in pixels"))
-    return pixel_size
+    return pitch_x
+end
+
+"""
+    uniform_pitch(edges) -> Union{Float64, Nothing}
+
+Pixel pitch of one axis, its span over its pixel count in Float64, so an origin far from zero
+keeps its accuracy; `nothing` if any pixel's width differs from it by more than 1e-4 relative
+beyond the rounding of the stored edges (a width of a uniform camera stored in Float32 can be off
+by one unit in the last place of its largest edge: 2.4e-4 of a pixel for 2048 pixels of 0.1 µm).
+"""
+function uniform_pitch(edges)
+    n = length(edges) - 1
+    n >= 1 || return nothing
+    first_edge, last_edge = Float64(first(edges)), Float64(last(edges))
+    pitch = (last_edge - first_edge) / n
+    isfinite(pitch) && pitch > 0 || return nothing
+    rounding = 2 * Float64(eps(float(max(abs(first(edges)), abs(last(edges))))))
+    previous = first_edge
+    for i in 2:(n + 1)
+        edge = Float64(edges[i])
+        abs((edge - previous) - pitch) <= 1e-4 * pitch + rounding || return nothing
+        previous = edge
+    end
+    return pitch
 end
 
 """
