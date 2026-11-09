@@ -17,6 +17,13 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   meant 550 photons. Boxes are still cut from the ADU image. The direct interface
   (`sigma_small`, `sigma_large`, `minval`) still filters the image as given. On this path the
   offset must be finite.
+  **Boxes change** on PSF-aware sCMOS calls with any offset, gain or QE map (not a readnoise
+  map): the per-pixel offset no longer enters the filter as signal, and `min_photons` now
+  means the same photon count on every pixel. On simulated frames (SMLMSim camera noise, PSF
+  sigma 1.35 pixels, `min_photons` 200 and 500), about 2% of boxes are replaced with an offset
+  map of 3 ADU standard deviation, about 3% with a QE map of 3% spread, and about 5% with a
+  gain map of 5% spread; the count stays within 0.2%. Scalar calibration and readnoise maps
+  give the same boxes as 0.4.0.
 - An sCMOS readnoise, gain or QE that is zero, negative or not finite (scalar, or any pixel of
   a map) raises `ArgumentError` naming the field and the number of pixels. A zero readnoise
   previously made the filter return NaN: no boxes for a scalar 0, and none within the large
@@ -24,6 +31,7 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   image in photons.
 - A NaN or Inf pixel in a float image raises `ArgumentError` with the count and the first
   (row, col, frame), also under `:auto`; it previously removed or shifted detections nearby.
+  A finite pixel too large for Float32, which detection converts to, is reported as such.
   Integer images skip the check. On the GPU the check runs on the device: about 0.4 ms per
   1000 frames of 256 x 256 (0.5% of the call), with nothing left in the memory pool.
 - `min_photons` without `psf_sigma` raises `ArgumentError`; it was silently ignored, leaving a
@@ -40,7 +48,8 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 - `psf_sigma` with a camera whose pixels are not square, or not all the same size, raises
   `ArgumentError`; the PSF width was converted with the x pixel size only. Each pixel's width
   must be positive and within 1e-4 of its axis's pitch (span over pixel count), beyond the
-  rounding of its stored edges, and the x and y pitches must agree within 1e-4. Such cameras can
+  rounding of its edges (at least single precision, so edges computed in Float32 and stored as
+  Float64 pass), and the x and y pitches must agree within 1e-4. Such cameras can
   use `sigma_small` and `sigma_large` in pixels. A camera that passes keeps 0.4.0's pixel size
   (the first x pixel's width), so its boxes do not change. Float16 cameras whose stored edges
   collapse pixels to zero width (above about 1,000 pixels) are refused.
@@ -48,6 +57,12 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   is now computed in at least Float32 on both paths: with read noise 20 and QE 0.05, the photon
   variance of 160,000 was infinite and a bright spot gave no box. Float32 and Float64
   calibration give the same variance as before.
+- The example scripts `basic_detection.jl` and `scmos_detection.jl` passed `psf_sigma` in
+  pixels (1.3) where microns are expected, so their filters were ten times too wide.
+
+### Removed
+- The internal `get_effective_gain`, unused since PSF-aware sCMOS detection works in photons,
+  and the Statistics dependency only it used.
 
 ## [0.4.0] - 2026-11-02
 

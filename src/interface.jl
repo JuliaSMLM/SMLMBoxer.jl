@@ -205,6 +205,9 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
   end
   # Convert to Float32 for type stability throughout pipeline
   imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
+  # A finite wider value can overflow in that conversion; name that cause, not "non-finite".
+  check_pixels && !(eltype(imagestack) <: Union{Float16,Float32}) &&
+    !pixels_are_finite(imagestack_f32) && validate_float32_range(imagestack)
 
   # Create args from config
   args = GetBoxesArgs(;
@@ -272,6 +275,19 @@ function validate_finite_pixels(image)
   row, col = index[1:2]
   frame = length(index) == 2 ? 1 : index[end]
   throw(ArgumentError("imagestack has $affected non-finite pixels; first (row, col, frame) = $((row, col, frame))"))
+end
+
+"""Report finite pixels that are outside Float32's range, which detection converts to."""
+function validate_float32_range(image)
+  outside(x) = isfinite(x) && !isfinite(Float32(x))
+  affected = count(outside, image)
+  affected == 0 && return nothing
+  index = Tuple(findfirst(outside, image))
+  row, col = index[1:2]
+  frame = length(index) == 2 ? 1 : index[end]
+  throw(ArgumentError("imagestack has $affected finite pixels outside Float32's range " *
+    "(magnitude above $(floatmax(Float32))), which detection converts to; first (row, col, frame) = " *
+    "$((row, col, frame))"))
 end
 
 """

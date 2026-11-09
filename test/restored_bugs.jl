@@ -58,9 +58,13 @@ end
         end
         masked = copy(image[:, :, 1]); masked[3, 7] = NaN32
         argument_message(() -> getboxes(masked; backend=:cpu), "1", "(3, 7, 1)")
-        # Includes conversion overflow rather than accepting Inf generated at entry.
+        # Includes conversion overflow rather than accepting Inf generated at entry, and names
+        # that cause: the input pixel is finite.
         overflowed = Float64.(image); overflowed[2, 3, 1] = 1e300
-        argument_message(() -> getboxes(overflowed; backend=:cpu), "(2, 3, 1)")
+        argument_message(() -> getboxes(overflowed; backend=:cpu), "1 finite pixels outside Float32",
+            "(2, 3, 1)")
+        wide_nan = Float64.(image); wide_nan[2, 3, 1] = NaN
+        argument_message(() -> getboxes(wide_nan; backend=:cpu), "1 non-finite pixels", "(2, 3, 1)")
         integer_image = round.(UInt16, image)
         rb, _ = getboxes(integer_image, camera; psf_sigma=0.13, backend=:cpu)
         @test length(rb) == 1
@@ -155,6 +159,13 @@ end
         # 2048-pixel camera differ by more than 1e-4 relative; they are uniform and are accepted.
         for p in (0.1f0, 0.065f0), cam in (IdealCamera(2048, 2048, p), SCMOSCamera(2048, 2048, p, 1.6f0))
             @test SMLMBoxer.get_pixel_size(cam) ≈ p rtol=1e-6
+        end
+        # The same edges widened to Float64 (a loader or file round trip) keep their Float32
+        # rounding and are accepted too, as 0.4.0 accepted them.
+        for (n, p) in ((2048, 0.065f0), (2304, 0.117f0))
+            built = IdealCamera(n, n, p)
+            widened = IdealCamera(Float64.(built.pixel_edges_x), Float64.(built.pixel_edges_y))
+            @test SMLMBoxer.get_pixel_size(widened) == SMLMBoxer.get_pixel_size(built)
         end
         # Far from the origin, Float32 rounding moves each width by up to 6e-4 of a pixel; the
         # camera is uniform within that rounding, is accepted, and a spot simulated there is found.

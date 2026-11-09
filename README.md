@@ -109,8 +109,9 @@ field or pixels at fault:
 
 With an `SCMOSCamera`, the PSF-aware path detects in photons per pixel,
 `(adu - offset) * gain / qe`, so `min_photons` means the same number of photons at every pixel
-of a gain map. Boxes are still cut from the ADU image. The direct interface filters the image as
-given, and `minval` stays in its units.
+of an offset, gain or QE map (0.4.0 filtered the raw counts and converted the threshold with the
+mean gain and QE, so such cameras now get somewhat different boxes; see the CHANGELOG). Boxes are still cut from the ADU image. The direct interface
+filters the image as given, and `minval` stays in its units.
 
 **PSF-aware (recommended)** — physical units, automatic filter configuration:
 

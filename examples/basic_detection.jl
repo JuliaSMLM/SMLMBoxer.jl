@@ -99,7 +99,8 @@ println()
 println("Step 4: Detecting spots with SMLMBoxer (PSF-aware interface)...")
 
 # Calculate PSF sigma in pixels
-psf_sigma_pixels = 0.13f0 / pixel_size  # 0.13 μm / 0.1 μm/pixel = 1.3 pixels
+psf_sigma_um = 0.13  # PSF width in microns: what psf_sigma expects
+psf_sigma_pixels = psf_sigma_um / pixel_size  # 0.13 μm / 0.1 μm/pixel = 1.3 pixels, for display
 println("  PSF sigma: $(round(psf_sigma_pixels, digits=2)) pixels")
 println("  Detection threshold: 500 photons")
 println()
@@ -107,7 +108,7 @@ println()
 # Detect on clean image (CPU)
 println("  Running on clean image (CPU)...")
 (roi_batch_clean, info_clean) = getboxes(img_clean, camera;
-    psf_sigma = psf_sigma_pixels,  # PSF-aware detection
+    psf_sigma = psf_sigma_um,  # PSF-aware detection (microns)
     min_photons = 500.0,            # Detect emitters with ≥500 photons
     boxsize = 11,                   # Larger box for better fitting
     overlap = 3.0,
@@ -118,7 +119,7 @@ t_clean = info_clean.elapsed_s
 # Detect on noisy image (CPU)
 println("  Running on noisy image (CPU)...")
 (roi_batch_noisy, info_noisy) = getboxes(img_noisy, camera;
-    psf_sigma = psf_sigma_pixels,
+    psf_sigma = psf_sigma_um,
     min_photons = 500.0,
     boxsize = 11,
     overlap = 3.0,
@@ -130,7 +131,7 @@ t_noisy = info_noisy.elapsed_s
 if CUDA.functional()
     println("  Running on noisy image (GPU)...")
     (roi_batch_gpu, info_gpu) = getboxes(img_noisy, camera;
-        psf_sigma = psf_sigma_pixels,
+        psf_sigma = psf_sigma_um,
         min_photons = 500.0,
         boxsize = 11,
         overlap = 3.0,

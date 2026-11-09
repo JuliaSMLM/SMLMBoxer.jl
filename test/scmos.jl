@@ -1,15 +1,44 @@
 # sCMOS cameras: scalar and per-pixel calibration and the
 # variance-weighted DoG path, on the CPU backend.
-using Test, SMLMBoxer, SMLMData
+using Test, SMLMBoxer, SMLMData, Random
 using SMLMSim
 using MicroscopePSFs: GaussianPSF
 
+# Noise-free counts for exact thresholds. SMLMSim has no noise-free counts primitive, so this
+# applies the camera model here; the testset below ties that model to SMLMSim's own noise model.
 function threshold_spots(camera; sigma=0.13, photons=500.0)
     emitters = [Emitter2DFit{Float64}((col-0.5)*0.1, 1.65, photons,
         0., 0., 0., 0., 0.; frame=1) for col in (17, 49)]
     image, _ = gen_images(BasicSMLD(emitters, camera, 1, 1), GaussianPSF(sigma);
         sampling=32, threaded=false)
     return Float32.(image .* camera.qe ./ camera.gain .+ camera.offset)
+end
+
+@testset "Item 7: counts convention matches SMLMSim's sCMOS noise model" begin
+    # SMLMSim renders photons, then applies QE, shot noise, read noise, gain (electrons per
+    # count) and offset. On a camera with gain, offset and QE maps, spots at three times the
+    # photon threshold are all found and spots at a third of it are not. An inverted gain
+    # convention would read every spot (qe / gain)^2 = 4 times brighter and find the dim ones.
+    Random.seed!(20261109)
+    n = 64
+    gain = 0.45 .* (1 .+ 0.05 .* randn(n, n))
+    offset = 100 .+ 3 .* randn(n, n)
+    qe = 0.9 .* (1 .+ 0.03 .* randn(n, n))
+    camera = SCMOSCamera(n, n, 0.1, 1.6; gain, offset, qe)
+    threshold = 600.0
+    sites = vec([(row, col) for row in 8:16:56, col in 8:16:56])
+    bright, dim = sites[1:2:end], sites[2:2:end]
+    emitter(site, photons) = Emitter2DFit{Float64}((site[2] - 0.5) * 0.1, (site[1] - 0.5) * 0.1,
+        photons, 0., 0., 0., 0., 0.; frame=1)
+    emitters = vcat([emitter(s, 3threshold) for s in bright], [emitter(s, threshold / 3) for s in dim])
+    image, _ = gen_images(BasicSMLD(emitters, camera, 1, 1), GaussianPSF(0.135);
+        bg=10.0, camera_noise=true, threaded=false)
+    rois, _ = getboxes(Float32.(image), camera; psf_sigma=0.135, min_photons=threshold, backend=:cpu)
+    centers = [(rois.y_corners[i] + 3, rois.x_corners[i] + 3) for i in eachindex(rois.frame_indices)]
+    near(a, b, d) = abs(a[1] - b[1]) <= d && abs(a[2] - b[2]) <= d
+    @test length(centers) == length(bright)
+    @test all(s -> any(c -> near(c, s, 1), centers), bright)
+    @test !any(s -> any(c -> near(c, s, 2), centers), dim)
 end
 
 @testset "Item 7: photon threshold on both halves of a gain map" begin

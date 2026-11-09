@@ -199,7 +199,9 @@ Extract pixel size in microns for PSF-aware detection, or raise `ArgumentError` 
 pixels are uniform and square (relative tolerance 1e-4); such cameras can use direct pixel
 sigmas. The rules, with each axis's pitch its span over its pixel count:
 - every pixel's width is positive and within 1e-4 of its axis's pitch, beyond the rounding of
-  its two stored edges (a uniform 2048-pixel Float32 camera has widths off by up to 1.5e-4);
+  its two edges, at least single precision even when stored as Float64 (edges computed in
+  Float32 and widened keep that rounding; a uniform 2048-pixel Float32 camera has widths off by
+  up to 1.5e-4);
 - the two pitches agree within 1e-4, beyond the rounding of the four end edges over the counts.
 
 # Arguments
@@ -231,7 +233,9 @@ function axis_pitch(edges)
     n = length(stored) - 1
     n >= 1 || return nothing
     values = Float64.(stored)
-    ulps = [Float64(eps(float(v))) for v in stored]  # spacing of the stored type at each edge
+    # Spacing of the stored type at each edge, floored at single precision: edges computed in
+    # Float32 and stored as Float64 still carry Float32 rounding.
+    ulps = [max(Float64(eps(float(v))), Float64(eps(Float32(v)))) for v in stored]
     pitch = (values[end] - values[1]) / n
     isfinite(pitch) && pitch > 0 || return nothing
     for i in 1:n
@@ -239,34 +243,6 @@ function axis_pitch(edges)
         width > 0 && abs(width - pitch) <= 1e-4 * pitch + ulps[i] + ulps[i + 1] || return nothing
     end
     return (pitch=pitch, uncertainty=(ulps[1] + ulps[end]) / n)
-end
-
-"""
-    get_effective_gain(camera::AbstractCamera)
-
-Get effective gain for converting photons to image ADU units (ADU/photon).
-
-For IdealCamera: returns 1.0 (assumes image is in photon units)
-For SCMOSCamera: returns QE / gain (photons → ADU conversion factor)
-  - SMLMData defines gain as e⁻/ADU (electrons per ADU)
-  - Physical conversion: photon → QE electrons → electrons/gain ADU
-  - So: ADU/photon = QE / gain
-
-For maps this is a mean conversion factor. PSF-aware getboxes instead converts
-each image pixel to photons and always uses effective gain 1 for its threshold.
-"""
-function get_effective_gain(camera::IdealCamera)
-    return 1.0f0  # IdealCamera assumes photon units
-end
-
-function get_effective_gain(camera::SCMOSCamera)
-    # Legacy mean conversion utility; PSF-aware thresholds do not use it.
-    # SMLMData defines gain as e⁻/ADU (electrons per ADU)
-    # Conversion: ADU = (photons × QE) / gain
-    # So effective_gain (ADU/photon) = QE / gain
-    gain = camera.gain isa Real ? camera.gain : mean(camera.gain)
-    qe = camera.qe isa Real ? camera.qe : mean(camera.qe)
-    return Float32(qe / gain)  # Combined: photons → ADU (QE / gain)
 end
 
 """
