@@ -182,6 +182,11 @@ end
                                 Float16[1024, 1025, 1024, 1025, 1026, 1027, 1028, 1029]))
             argument_message(() -> SMLMBoxer.get_pixel_size(cam), "square")
         end
+        # The rounding allowance is each width's own edges, not the largest edge's: a first width
+        # 2e-4 too wide near the origin is refused although the far edges round by more.
+        wide_first = Float32.(0:2048) .* 0.1f0
+        wide_first[2] = 0.10002f0
+        argument_message(() -> SMLMBoxer.get_pixel_size(IdealCamera(wide_first, wide_first)), "square")
     end
 
     @testset "Low-precision sCMOS calibration does not overflow the variance" begin
@@ -196,5 +201,9 @@ end
                 @test variance[5, 5] ≈ 160_000 rtol=1e-3
             end
         end
+        # Float32 calibration keeps 0.4.0's Float32 arithmetic bit for bit (Float64 would round
+        # this one differently), so its boxes do not change.
+        cam32 = SCMOSCamera(9, 9, 0.125f0, 0.3f0; gain=0.46f0)
+        @test SMLMBoxer.get_variance_map(cam32, (9, 9))[5, 5] === (0.3f0 / 0.46f0)^2
     end
 end
