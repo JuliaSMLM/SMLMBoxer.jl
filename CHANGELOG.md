@@ -8,6 +8,62 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
+### Fixed
+- With an `SCMOSCamera`, PSF-aware detection (`psf_sigma` with `min_photons`) now works in
+  photons per pixel: each pixel becomes `(adu - offset) * gain / qe`, weighted by the
+  variance `(readnoise / qe)^2`, and the threshold needs no gain conversion. 0.4.0 converted
+  `min_photons` with the camera's mean QE / gain, so with a gain map the threshold in photons
+  varied by pixel: at a pixel whose gain is 10% above the map's mean, `min_photons = 500`
+  meant 550 photons. Boxes are still cut from the ADU image. The direct interface
+  (`sigma_small`, `sigma_large`, `minval`) still filters the image as given. On this path the
+  offset must be finite.
+  **Boxes change** on PSF-aware sCMOS calls with any offset, gain or QE map (not a readnoise
+  map): the per-pixel offset no longer enters the filter as signal, and `min_photons` now
+  means the same photon count on every pixel. On simulated frames (SMLMSim camera noise, PSF
+  sigma 1.35 pixels, `min_photons` 200 and 500), about 2% of boxes are replaced with an offset
+  map of 3 ADU standard deviation, about 3% with a QE map of 3% spread, and about 5% with a
+  gain map of 5% spread; the count stays within 0.2%. Scalar calibration and readnoise maps
+  give the same boxes as 0.4.0.
+- An sCMOS readnoise, gain or QE that is zero, negative or not finite (scalar, or any pixel of
+  a map) raises `ArgumentError` naming the field and the number of pixels. A zero readnoise
+  previously made the filter return NaN: no boxes for a scalar 0, and none within the large
+  Gaussian's window of a zero pixel. For a noise-free readout, use an IdealCamera with the
+  image in photons.
+- A NaN or Inf pixel in a float image raises `ArgumentError` with the count and the first
+  (row, col, frame), also under `:auto`; it previously removed or shifted detections nearby.
+  A finite pixel too large for Float32, which detection converts to, is reported as such.
+  Integer images skip the check. On the GPU the check runs on the device: about 0.4 ms per
+  1000 frames of 256 x 256 (0.5% of the call), with nothing left in the memory pool.
+- `min_photons` without `psf_sigma` raises `ArgumentError`; it was silently ignored, leaving a
+  threshold of 0 that made every local maximum a box. Its keyword default is now `nothing`;
+  with `psf_sigma` and no `min_photons`, 500 is used and stored in `BoxerConfig`.
+- An image smaller than `boxsize` in either dimension, or an array of more than 3 dimensions,
+  raises `ArgumentError` before filtering (previously `BoundsError` or `ErrorException`). A
+  stack of zero frames returns an empty ROIBatch instead of a `DivideError`.
+- `BoxerConfig` and `getboxes` validate their parameters and raise `ArgumentError` naming the
+  field: sigmas must be finite with `0 < sigma_small < sigma_large`, `psf_sigma` and
+  `min_photons` finite and positive, `minval` and `overlap` finite (`overlap >= 0`),
+  `boxsize >= 1`, `backend` one of `:cpu`, `:gpu`, `:auto`, and timeouts `>= 0`. Swapped
+  sigmas previously returned rings of false boxes, and `psf_sigma = 0` returned no boxes.
+- `psf_sigma` with a camera whose pixels are not square, or not all the same size, raises
+  `ArgumentError`; the PSF width was converted with the x pixel size only. Each pixel's width
+  must be positive and within 1e-4 of its axis's pitch (span over pixel count), beyond the
+  rounding of its edges (at least single precision, so edges computed in Float32 and stored as
+  Float64 pass), and the x and y pitches must agree within 1e-4. Such cameras can
+  use `sigma_small` and `sigma_large` in pixels. A camera that passes keeps 0.4.0's pixel size
+  (the first x pixel's width), so its boxes do not change. Float16 cameras whose stored edges
+  collapse pixels to zero width (above about 1,000 pixels) are refused.
+- sCMOS read noise, gain and QE stored as Float16 no longer overflow the noise variance, which
+  is now computed in at least Float32 on both paths: with read noise 20 and QE 0.05, the photon
+  variance of 160,000 was infinite and a bright spot gave no box. Float32 and Float64
+  calibration give the same variance as before.
+- The example scripts `basic_detection.jl` and `scmos_detection.jl` passed `psf_sigma` in
+  pixels (1.3) where microns are expected, so their filters were ten times too wide.
+
+### Removed
+- The internal `get_effective_gain`, unused since PSF-aware sCMOS detection works in photons,
+  and the Statistics dependency only it used.
+
 ## [0.4.0] - 2026-11-02
 
 ### Breaking
@@ -16,38 +72,24 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   the threshold at that photon count. At a PSF sigma of 1.35 pixels (0.135 µm on
   0.1 µm pixels), a pixel-corner spot needs about 1.1× as many photons; at sigma
   1 pixel it needs about 1.2×, and at 0.7 pixel about 1.5×. The standard and sCMOS
-  paths use their own kernels. Among 62,682 clean in-focus lab spots,
-  half are detected near 487 fitted photons at `min_photons = 500`, versus 566 before.
-  The same setting finds more boxes: on 2000 lab frames at `min_photons = 500`, 6.5%
-  more with an IdealCamera and 4.1% more with an SCMOSCamera (10.3% and 6.7% at 1000);
-  every box 0.3.4 found on the IdealCamera path is still found.
-  At a PSF sigma of 1.35 px, multiplying `min_photons` by 1.19 (IdealCamera) or
+  paths use their own kernels. The same setting gives a lower filter threshold than
+  before, so it finds more boxes. At a PSF sigma of 1.35 px, multiplying `min_photons` by 1.19 (IdealCamera) or
   1.12 (sCMOS) gives 0.3.4's threshold (0.65 / 0.547 and 0.65 / 0.581).
 - Images must match their camera's (rows, columns), or raise `DimensionMismatch`.
-  A 192 × 192 crop passed with its full 256 × 256 camera previously returned 24,347
-  boxes with coordinates silently wrong by 64 pixels.
+  A crop passed with its full camera previously returned boxes with coordinates silently
+  wrong by the crop's offset.
 - sCMOS variance weighting now uses `(readnoise / gain)^2` in ADU², including maps.
   This fixes the units: the image is in ADU, so the variance must be in ADU².
-  On real frames with gain 0.40–0.50 e⁻/ADU, 2.3% of boxes change, with no measurable
-  change in detections. With every box fitted on frames 1–2000, added boxes hold
-  1,091 clean in-focus spots of at least 500 photons, versus 1,052 in removed boxes;
-  on frames 2001–4000 the counts are 1,168 versus 1,149.
 
 ### Fixed
 - Increasing `overlap` now permits closer neighbors according to the max-pool window.
   Maxima sharing that window have equal intensities; the earlier detection is kept.
-  On 2000 lab frames this adds 66 boxes at boxsize 9 / overlap 3,
-  1,396 at boxsize 9 / overlap 4, and 201 at boxsize 11 / overlap 4, removing none;
-  default-overlap results are unchanged for boxsize 7 and larger. At boxsize 5,
-  default overlap keeps 28 more boxes per 1000 frames, real neighbors the old rule removed.
-- Even box sizes use the same clamped-corner rule as odd sizes; real-frame box sizes
-  8 and 10 previously raised `DimensionMismatch`. Odd-size crops remain unchanged.
-- After clamping, keep only the brightest filtered detection per (corner, frame).
-  This removes the 3–13 duplicate boxes per 2000 real frames seen in 0.3.4.
+- Even box sizes use the same clamped-corner rule as odd sizes; box sizes 8 and 10
+  could previously raise `DimensionMismatch`. Odd-size crops remain unchanged.
+- After clamping, keep only the brightest filtered detection per (corner, frame);
+  0.3.4 could return duplicate boxes.
 - 0.3.4's known issue is fixed: under CUDA.jl 6.5.0, a `getboxes` call now returns
-  its GPU memory to the driver. After a 1000-frame call on real frames, a process holds
-  32 to 64 MiB more than before it, against 1,120 MiB (IdealCamera) and 1,600 MiB
-  (sCMOS) with 0.3.4.
+  its GPU memory to the driver.
 - The chunked `recommend_batch_size` example offsets frame indices by the chunk start.
   The lab caller already tracks this offset; no new keyword is needed.
 
@@ -61,8 +103,7 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   throughput on 500 frames at 256×256 rises from 5,329 to 13,805 images/s. The GPU wins
   from one frame at all tested sizes (128, 256 and 512 px), with either one or 32 CPU
   threads on the AMD Ryzen 9 5950X. Release after a short call takes
-  about 0.02 ms; returning 2 GiB to the driver takes about 42 ms. On
-  CUDA.jl 5.9 to 6.5.0, the process is back within 64 MiB of its baseline after a call.
+  about 0.02 ms; returning 2 GiB to the driver takes about 42 ms.
   The lab pipeline (SMLMAnalysis with GaussMLE, which caps CUDA.jl at 5.11.3) does not
   see the 57 ms: under 5.11.3, `reclaim()` has no GC, and the same call takes 1.73 ms
   in 0.3.4 and 1.40 ms in 0.4.0.
@@ -106,16 +147,14 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   zero, so a background produced false boxes along the image edges. Edge pixels are now
   filtered with the in-bounds part of each Gaussian, as the sCMOS path already did;
   pixels whose whole filter window lies inside the image are filtered exactly as before.
-  Boxes change only within a few pixels of the edges: on 2000 frames of lab sCMOS data
-  converted to photons, the share of boxes clamped at an edge falls from 22% to 11% at
-  the default `min_photons` (the sCMOS path gives 11% on the same frames), and on
-  simulated frames with a 10 photon/px background from 72% to 15% at `min_photons = 50`.
+  Boxes change only within a few pixels of the edges: on simulated frames with a
+  10 photon/px background, the share of boxes clamped at an edge falls from 72% to 15% at
+  `min_photons = 50`.
 - Without a camera, the ROIBatch's default IdealCamera was one pixel larger than the
   image on each axis. Box positions were and are unchanged.
 - Overlap removal now applies to every frame of a stack; previously it applied only to
   frame 1 (#19). Overlap removal no longer allocates per pair of boxes (a 600-box frame
-  takes 0.25 ms instead of 19 ms), so the fix costs nothing measurable at the default
-  `min_photons`; with 500-700 boxes per frame it adds 0.2-0.35 ms per frame.
+  takes 0.25 ms instead of 19 ms).
 - `getboxes` retries GPU memory errors and an unavailable device until `auto_timeout`
   under `backend=:auto`, then uses the CPU; any other GPU failure warns and uses the CPU
   at once. Under `backend=:gpu`, resource errors retry until `gpu_timeout`, and other
@@ -138,9 +177,8 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   GPU `getboxes` call the process keeps its peak GPU memory reserved until it exits
   (reused by later calls in the same process, unavailable to other processes). CUDA.jl
   6.4 and earlier release it.
-- The standard GPU convolution rounds differently from cuDNN: on 2000 lab frames at
-  `min_photons = 50`, 2 of 1.13 million boxes away from the edges moved by one pixel
-  (near-tied maxima); none at the default `min_photons`.
+- The standard GPU convolution rounds differently from cuDNN, so a box at a near-tied
+  maximum can move by one pixel.
 
 ## [0.3.3] - 2026-10-27
 

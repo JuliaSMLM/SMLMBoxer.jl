@@ -81,8 +81,12 @@ println("First detection at ($(first_roi.corner[1]), $(first_roi.corner[2]))")
 
 This example demonstrates variance-weighted detection for sCMOS cameras with spatially-varying noise.
 
-Variance weights use `(readnoise / gain)^2` in ADU², per pixel when either calibration
-is a map. The image dimensions must match the camera's pixel edges.
+With an `SCMOSCamera`, the PSF-aware path (`psf_sigma`/`min_photons`) detects in photons per
+pixel, `(adu - offset) * gain / qe`, weighting each pixel by `1 / (readnoise / qe)^2`; boxes are
+still cut from the ADU image. The direct interface (`sigma_small`, `sigma_large`, `minval`)
+filters the image as given, weighted by `1 / (readnoise / gain)^2` in ADU².
+
+The image dimensions must match the camera's pixel edges.
 
 ### Creating sCMOS Camera
 
@@ -230,8 +234,7 @@ either camera path and either one or 32 CPU threads on the AMD Ryzen 9 5950X.
 GPU arrays are freed as soon as each batch is done, and the release after a successful
 call no longer runs a full garbage collection. Release after a short call takes
 about 0.02 ms on the RTX 4090; returning 2 GiB to the driver takes
-about 42 ms. On CUDA.jl 5.9 to 6.5.0, the process is back within 64 MiB of
-its baseline after a call.
+about 42 ms.
 
 ### Large Dataset Processing
 

@@ -5,7 +5,11 @@ Detect particles/blobs in a multidimensional image stack and return
 ROI batch with location tracking and processing metadata.
 
 # Arguments
-- `imagestack::AbstractArray{<:Real}`: The input image stack. Should be 2D or 3D.
+- `imagestack::AbstractArray{<:Real}`: A finite 2D image or 3D (rows, cols, frames) stack.
+  Both image dimensions must be >= boxsize. Unsupported dimensions and undersized
+  images raise `ArgumentError` before filtering. Zero frames returns an empty ROIBatch
+  and BoxesInfo (CPU, zero batches). NaN/Inf raises `ArgumentError` with the count and
+  first (row, col, frame), including under `:auto`; integer inputs skip the scan.
 - `camera::Union{AbstractCamera,Nothing}`: Optional camera object (IdealCamera or SCMOSCamera) from SMLMData.
   If not provided, an IdealCamera of the image's size with 1 um pixels is created
   (coordinates in um equal pixels).
@@ -15,13 +19,19 @@ ROI batch with location tracking and processing metadata.
 ## Primary Interface (Recommended - PSF-Aware)
 - `psf_sigma::Real`: PSF sigma in microns (physical units, e.g., 0.13 for 130nm PSF).
   Automatically converted to pixels using camera pixel size and sets optimal DoG filter parameters.
-  **Requires camera to be provided.**
-- `min_photons::Real`: Minimum total photons for detection (default: 500.0).
+  Must be finite and > 0. **Requires a camera with uniform square pixels**
+  (relative tolerance 1e-4); otherwise use sigma_small/sigma_large in pixels.
+- `min_photons::Union{Real,Nothing}`: Positive finite minimum total photons. Defaults to
+  `nothing`; requires `psf_sigma`. With `psf_sigma`, omission uses 500.0.
+  For sCMOS, each pixel is converted to photons before detection; the threshold
+  uses effective gain 1. ROI data is still cut from the supplied ADU image.
   A noise-free, pixel-integrated Gaussian centered on a pixel just reaches the
   threshold at this photon count. See `BoxerConfig` for subpixel-position effects.
 
 ## Advanced Interface (Direct Control)
 For expert users who want direct control over filter parameters:
+Sigmas must be finite with `0 < sigma_small < sigma_large`; `minval` must be finite.
+
 - `sigma_small::Real`: Small Gaussian sigma in pixels (default: 1.0).
 - `sigma_large::Real`: Large Gaussian sigma in pixels (default: 2.0).
 - `minval::Real`: DoG filter intensity threshold (default: 0.0).
@@ -29,6 +39,9 @@ For expert users who want direct control over filter parameters:
 Note: If `psf_sigma` is provided, it overrides sigma_small/sigma_large/minval.
 
 ## Other Parameters
+`boxsize >= 1`; `overlap` must be finite and >= 0. Timeouts must be >= 0 (Inf allowed).
+Invalid parameter values raise `ArgumentError` naming the field and value.
+
 - `boxsize::Int`: ROI size in pixels, odd or even (default: 7).
 - `overlap::Real`: pixels (default 2.0). Local maxima are found in a square window of k =
   max(3, ⌊boxsize − overlap⌋) pixels, so two detections in one frame are at least ⌈k/2⌉
@@ -87,18 +100,32 @@ When using the PSF-aware interface with `psf_sigma` (in microns):
 - sigma_small = 1.0 × psf_sigma_pixels (matches PSF for optimal blob detection)
 - sigma_large = 2.0 × psf_sigma_pixels (background suppression)
 - minval uses the actual filter kernels' peak response to a pixel-integrated Gaussian
-  of min_photons photons, times effective gain (QE / gain for sCMOS). The sCMOS reference
+  of min_photons photons, with effective gain 1. The sCMOS reference
   uses uniform variance and its own Gaussian windows, so thresholds can differ by path.
 
 ## Variance-Weighted Filtering (sCMOS)
 
 When an SCMOSCamera is provided, the package uses **variance-weighted filtering** based on the
-SMITE algorithm. Each pixel's contribution to the convolution is weighted by:
+SMITE algorithm. Every readnoise, gain and qe value must be finite and > 0, including
+maps; otherwise `ArgumentError` names the field and affected pixel count. A noise-free
+readout should use an IdealCamera with the image in photons.
+With an `SCMOSCamera`, the PSF-aware path (`psf_sigma`/`min_photons`) detects in
+photons per pixel: `(adu - offset) * gain / qe`, with variance `(readnoise / qe)^2`
+in photons². Offset, gain and QE may each be scalar or maps; offset must be finite
+when this conversion is used. The threshold uses effective gain 1 and the
+variance-weighted reference response to `min_photons` photons (uniform variance).
+Conversion runs on an owned batch copy on its device. ROI pixels are still cut
+from the caller's ADU image and retain the supplied camera and coordinate convention.
+The direct interface (`sigma_small`, `sigma_large`, `minval`) filters the image as
+given with `(readnoise / gain)^2` in ADU²; `minval` stays in those image units.
+
+Each pixel's contribution to the convolution is weighted by:
 
     weight = gaussian_kernel / variance
 
-where variance = (readnoise / gain)² in ADU², per pixel when either calibration is a map
-(gain in e⁻/ADU). This implements inverse variance weighting:
+For PSF-aware detection, variance = (readnoise / qe)² in photons².
+For direct parameters, variance = (readnoise / gain)² in ADU²
+(gain in e⁻/ADU), including maps. This implements inverse variance weighting:
 - Low-noise pixels receive high weight (strong influence on detection)
 - High-noise pixels receive low weight (reduced influence, avoiding false positives)
 
@@ -154,6 +181,12 @@ end
 ```
 """
 function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}, config::BoxerConfig)
+  ndims(imagestack) in (2, 3) || throw(ArgumentError(
+      "imagestack has $(ndims(imagestack)) dimensions; expected a 2D image or 3D (rows, cols, frames) stack"))
+  for dim in 1:2
+    size(imagestack, dim) >= config.boxsize || throw(ArgumentError(
+        "image dimension $dim has size $(size(imagestack, dim)), smaller than boxsize=$(config.boxsize)"))
+  end
   if camera !== nothing
     image_size = (size(imagestack, 1), size(imagestack, 2))
     camera_size = (length(camera.pixel_edges_y) - 1, length(camera.pixel_edges_x) - 1)
@@ -163,9 +196,18 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
 
   # Box extraction needs a host copy anyway; keep caller-owned GPU storage untouched
   # and avoid allocating GPU conversion/reshape aliases outside batch cleanup.
-  imagestack = imagestack isa CuArray ? Array(imagestack) : imagestack
+  check_pixels = !(eltype(imagestack) <: Integer)
+  if imagestack isa CuArray
+    check_pixels && validate_finite_pixels(imagestack)
+    # Float64 values can still overflow during the subsequent Float32 conversion.
+    check_pixels = check_pixels && !(eltype(imagestack) <: Union{Float16,Float32})
+    imagestack = Array(imagestack)
+  end
   # Convert to Float32 for type stability throughout pipeline
   imagestack_f32 = imagestack isa AbstractArray{Float32} ? imagestack : Float32.(imagestack)
+  # A finite wider value can overflow in that conversion; name that cause, not "non-finite".
+  check_pixels && !(eltype(imagestack) <: Union{Float16,Float32}) &&
+    !pixels_are_finite(imagestack_f32) && validate_float32_range(imagestack)
 
   # Create args from config
   args = GetBoxesArgs(;
@@ -181,7 +223,8 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
       backend=config.backend,
       auto_timeout=config.auto_timeout,
       gpu_timeout=config.gpu_timeout,
-      on_wait=config.on_wait
+      on_wait=config.on_wait,
+      check_pixels
   )
   return _getboxes_impl(args)
 end
@@ -189,7 +232,7 @@ end
 # Kwargs calling convention (forwards to Config form)
 function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamera,Nothing}=nothing;
                   psf_sigma::Union{Real,Nothing}=nothing,
-                  min_photons::Real=500.0,
+                  min_photons::Union{Real,Nothing}=nothing,
                   sigma_small::Union{Real,Nothing}=nothing,
                   sigma_large::Union{Real,Nothing}=nothing,
                   minval::Union{Real,Nothing}=nothing,
@@ -198,11 +241,11 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
                   backend::Symbol=:auto,
                   auto_timeout::Real=300.0,
                   gpu_timeout::Real=Inf,
-                  on_wait::Union{Function,Nothing}=nothing)
+                  on_wait=nothing)
   # Build config from kwargs
   config = BoxerConfig(
       psf_sigma=psf_sigma === nothing ? nothing : Float64(psf_sigma),
-      min_photons=Float64(min_photons),
+      min_photons=min_photons === nothing ? nothing : Float64(min_photons),
       sigma_small=Float64(sigma_small === nothing ? 1.0 : sigma_small),
       sigma_large=Float64(sigma_large === nothing ? 2.0 : sigma_large),
       minval=Float64(minval === nothing ? 0.0 : minval),
@@ -215,6 +258,36 @@ function getboxes(imagestack::AbstractArray{<:Real}, camera::Union{AbstractCamer
   )
 
   return getboxes(imagestack, camera, config)
+end
+
+"""Scan host pixels without a mask; CuArray dispatch uses an explicitly freed device flag."""
+pixels_are_finite(image) = mapreduce(isfinite, &, image; init=true)
+
+"""Report all non-finite pixels and the first (row, column, frame), in storage order."""
+function validate_finite_pixels(image)
+  eltype(image) <: Integer && return nothing
+  pixels_are_finite(image) && return nothing
+  # Diagnostics are only needed on error. A host copy avoids GC-managed count and
+  # findfirst reduction buffers when the caller supplied a CuArray directly.
+  diagnostics = image isa CuArray ? Array(image) : image
+  affected = count(!isfinite, diagnostics)
+  index = Tuple(findfirst(!isfinite, diagnostics))
+  row, col = index[1:2]
+  frame = length(index) == 2 ? 1 : index[end]
+  throw(ArgumentError("imagestack has $affected non-finite pixels; first (row, col, frame) = $((row, col, frame))"))
+end
+
+"""Report finite pixels that are outside Float32's range, which detection converts to."""
+function validate_float32_range(image)
+  outside(x) = isfinite(x) && !isfinite(Float32(x))
+  affected = count(outside, image)
+  affected == 0 && return nothing
+  index = Tuple(findfirst(outside, image))
+  row, col = index[1:2]
+  frame = length(index) == 2 ? 1 : index[end]
+  throw(ArgumentError("imagestack has $affected finite pixels outside Float32's range " *
+    "(magnitude above $(floatmax(Float32))), which detection converts to; first (row, col, frame) = " *
+    "$((row, col, frame))"))
 end
 
 """
@@ -235,7 +308,9 @@ end
 Process imagestack with memory-aware batching. Handles both single-batch (fits in memory)
 and multi-batch (too large) cases.
 
-Returns `(coords, batch_size, n_batches, memory_per_batch)`.
+Returns `(coords, batch_size, n_batches, memory_per_batch)`. If an input pixel is
+non-finite, `coords` is the marker `nothing`: all owned temporaries are freed normally,
+and the caller reports the input error after releasing device memory.
 
 # Arguments
 - `imagestack`: 4D image stack (ny, nx, 1, nframes)
@@ -250,8 +325,10 @@ function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
     use_gpu::Bool, max_batch_frames::Int=size(imagestack, 4),
     batch_cleanup::Union{Function,Nothing}=nothing)
   n_images = size(imagestack, 4)
+  n_images == 0 && return Matrix{Float32}[], 0, 0, 0
   memory_per_frame = estimate_gpu_memory_per_frame(
-    size(imagestack, 1), size(imagestack, 2), args.camera)
+    size(imagestack, 1), size(imagestack, 2), args.camera;
+    detect_in_photons=args.detect_in_photons)
   batch_size = frames_per_batch(n_images, memory_per_frame, max_free_mem, max_batch_frames)
   n_batches = cld(n_images, batch_size)
   memory_per_batch = batch_size * memory_per_frame
@@ -264,12 +341,24 @@ function _process_with_batching(imagestack, args, kernelsize, max_free_mem;
     local coords_batch
     completed = false
     try
-      batch = n_batches == 1 ? imagestack : imagestack[:, :, :, start_idx:end_idx]
-      filtered_batch = dog_filter(batch, args; use_gpu)
+      # Upload once, then check the same storage the GPU filter will read. Return
+      # invalid input normally so its ArgumentError never crosses the GPU catch.
+      if use_gpu
+        source = n_batches == 1 ? imagestack : @view(imagestack[:, :, :, start_idx:end_idx])
+        batch = source isa CuArray ? copy(source) : CuArray(source)
+      else
+        batch = n_batches == 1 ? imagestack : imagestack[:, :, :, start_idx:end_idx]
+      end
+      if args.check_pixels && !pixels_are_finite(batch)
+        completed = true
+        return nothing, batch_size, n_batches, memory_per_batch
+      end
+      filtered_batch = dog_filter(batch, args; use_gpu,
+          owned_input=use_gpu || n_batches != 1)
       coords_batch = findlocalmax(filtered_batch, kernelsize; minval=args.minval, use_gpu)
       completed = true
     finally
-      free_gpu_arrays(filtered_batch, n_batches == 1 ? nothing : batch;
+      free_gpu_arrays(filtered_batch, use_gpu || n_batches != 1 ? batch : nothing;
         failed=!completed)
     end
 
@@ -303,12 +392,12 @@ function _getboxes_impl(args::GetBoxesArgs)
   imagestack = reshape_for_flux(args.imagestack)
 
   minkernelsize = 3
-  kernelsize = Int(floor(args.boxsize - args.overlap))
-  kernelsize = max(minkernelsize, kernelsize)
+  kernelsize = floor(Int, max(minkernelsize, args.boxsize - args.overlap))
 
   # Estimate memory needed for at least 1 frame (minimum batch)
   nrows, ncols = size(imagestack, 1), size(imagestack, 2)
-  min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera)
+  min_memory_needed = estimate_gpu_memory_per_frame(nrows, ncols, args.camera;
+      detect_in_photons=args.detect_in_photons)
 
   # Track results
   actual_backend = :cpu
@@ -318,7 +407,9 @@ function _getboxes_impl(args::GetBoxesArgs)
   memory_per_batch = 0
   gpu_succeeded = false
 
-  if args.backend != :cpu && has_cuda()
+  empty_stack = size(imagestack, 4) == 0
+  coords = Matrix{Float32}[]
+  if !empty_stack && args.backend != :cpu && has_cuda()
     timeout = args.backend == :auto ? args.auto_timeout : args.gpu_timeout
     deadline = time() + timeout
     gpu_fallback = false
@@ -405,11 +496,12 @@ function _getboxes_impl(args::GetBoxesArgs)
         @warn "GPU unavailable after $(timeout)s, using CPU"
       end
     end
-  elseif args.backend == :gpu
+  elseif !empty_stack && args.backend == :gpu
+      args.check_pixels && validate_finite_pixels(args.imagestack)
       error("GPU backend requested but CUDA is not functional")
   end
 
-  if !gpu_succeeded
+  if !empty_stack && !gpu_succeeded
       # CPU path
       max_free_mem = Sys.free_memory()
       coords, batch_size, n_batches, memory_per_batch = _process_with_batching(
@@ -418,7 +510,11 @@ function _getboxes_impl(args::GetBoxesArgs)
           batch_cleanup=() -> GC.gc(false))
   end
 
-  maxcoords = removeoverlap(coords, args)
+  # A pixel-check marker takes the normal cleanup path above. Reporting it here
+  # cannot be confused with a GPU fault or trigger the :auto CPU fallback.
+  coords === nothing && validate_finite_pixels(args.imagestack)
+
+  maxcoords = empty_stack ? zeros(Float32, 0, 4) : removeoverlap(coords, args)
 
   boxstack, boxcoords = getboxstack(imagestack, maxcoords, args)
 

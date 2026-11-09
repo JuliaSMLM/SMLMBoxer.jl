@@ -30,7 +30,8 @@ Specify physical PSF parameters (in microns), automatically converted to optimal
 ### Variance-Weighted Filtering (sCMOS)
 When `SCMOSCamera` is provided, implements SMITE-style inverse variance weighting:
 - Each pixel weighted by `gaussian_kernel / variance`, with
-  `variance = (readnoise / gain)^2` in ADU² (gain in e⁻/ADU)
+  `variance = (readnoise / qe)^2` in photons² for PSF-aware detection,
+  or `(readnoise / gain)^2` in ADU² for direct parameters (gain in e⁻/ADU)
 - Low-noise pixels: high weight (strong detection influence)
 - High-noise pixels: low weight (reduced false positives)
 - GPU-accelerated via KernelAbstractions.jl (device-agnostic kernels)
@@ -87,29 +88,66 @@ config = BoxerConfig(
 
 ### `BoxerConfig`
 
-Configuration struct for ROI detection parameters. Supports `@kwdef` construction with defaults.
+
+Images must be finite 2D images or 3D `(rows, cols, frames)` stacks, with each image
+dimension at least `boxsize`. Unsupported dimensions and undersized images raise
+`ArgumentError` before filtering. A zero-frame stack returns an empty `ROIBatch`
+and `BoxesInfo` (CPU, zero batches). NaN/Inf pixels raise `ArgumentError` with the
+count and first `(row, col, frame)`, including under `:auto`; integers skip the scan.
+
+`SCMOSCamera` requires every `readnoise`, `gain` and `qe` value to be finite and
+strictly positive, including maps. Errors name the field and affected pixel count.
+A noise-free readout should use `IdealCamera` with the image in photons.
+
+With an `SCMOSCamera`, the PSF-aware path (`psf_sigma`/`min_photons`) detects in
+photons per pixel: `(adu - offset) * gain / qe`, with variance `(readnoise / qe)^2`
+in photons². Offset, gain and QE may each be scalar or maps; offset must be finite
+when this conversion is used. The threshold uses effective gain 1 and the
+variance-weighted reference response to `min_photons` photons (uniform variance).
+Conversion runs on an owned batch copy on its device. ROI pixels are still cut
+from the caller's ADU image and retain the supplied camera and coordinate convention.
+The direct interface (`sigma_small`, `sigma_large`, `minval`) filters the image as
+given with `(readnoise / gain)^2` in ADU²; `minval` stays in those image units.
+
+
+Use the `BoxerConfig` keyword constructor. It converts values to field types before
+validation, including `boxsize=9.0` and `Int32` numeric fields. `min_photons` defaults to `nothing` and
+requires `psf_sigma`; when `psf_sigma` is given and `min_photons` omitted, the config
+stores **500.0**. Both must be finite and > 0. PSF-aware detection requires a camera
+whose pixels are all square and uniformly sized (relative tolerance 1e-4).
+Other cameras can use `sigma_small`/`sigma_large` in pixels with the direct interface.
+
+Direct sigmas must be finite with `0 < sigma_small < sigma_large`, and `minval`
+must be finite. `boxsize >= 1`, `overlap` must be finite and >= 0,
+`backend` must be `:cpu`, `:gpu` or `:auto`, and both `auto_timeout` and `gpu_timeout`
+must be >= 0 (Inf allowed). `on_wait` is a function or `nothing`.
+Invalid parameters raise `ArgumentError` naming the field and value.
+
+
+Configuration struct for ROI detection parameters. Its keyword constructor validates
+parameters and resolves the PSF-aware photon default. Default keyword values:
 
 ```julia
-@kwdef struct BoxerConfig
+BoxerConfig(
     # PSF-aware interface (recommended)
-    psf_sigma::Union{Float64,Nothing} = nothing  # PSF sigma in microns
-    min_photons::Float64 = 500.0                 # Minimum photons for detection
+    psf_sigma = nothing,         # PSF sigma in microns
+    min_photons = nothing,       # 500.0 when psf_sigma is set
 
     # Advanced interface (direct control)
-    sigma_small::Float64 = 1.0    # Small Gaussian sigma in pixels
-    sigma_large::Float64 = 2.0    # Large Gaussian sigma in pixels
-    minval::Float64 = 0.0         # DoG intensity threshold
+    sigma_small = 1.0,           # Small Gaussian sigma in pixels
+    sigma_large = 2.0,           # Large Gaussian sigma in pixels
+    minval = 0.0,                # DoG intensity threshold
 
     # Box parameters
-    boxsize::Int = 7              # ROI size in pixels
-    overlap::Float64 = 2.0        # Local-maximum window is max(3, ⌊boxsize - overlap⌋)
+    boxsize = 7,                # ROI size in pixels
+    overlap = 2.0,              # Local-maximum window is max(3, ⌊boxsize - overlap⌋)
 
     # Backend parameters
-    backend::Symbol = :auto       # :cpu, :gpu, or :auto
-    auto_timeout::Float64 = 300.0  # Max wait for GPU in :auto mode
-    gpu_timeout::Float64 = Inf    # Max wait in :gpu mode
-    on_wait::Union{Function,Nothing} = nothing  # Optional wait progress callback
-end
+    backend = :auto,            # :cpu, :gpu, or :auto
+    auto_timeout = 300.0,       # Max wait for GPU in :auto mode
+    gpu_timeout = Inf,          # Max wait in :gpu mode
+    on_wait = nothing,          # Optional wait progress callback
+)
 ```
 
 **Usage:**
@@ -155,7 +193,7 @@ After clamping, keep the brightest filtered detection per corner and frame.
 
 *PSF-Aware Interface (Recommended):*
 - `psf_sigma::Real` - PSF sigma in microns (requires camera for pixel size conversion)
-- `min_photons::Real` - Photon threshold (default: 500.0). A noise-free,
+- `min_photons::Union{Real,Nothing}` - Photon threshold (default: nothing; 500.0 with psf_sigma). A noise-free,
   pixel-integrated Gaussian centered on a pixel just reaches the threshold at this
   count. See `BoxerConfig` for subpixel-position effects.
 
@@ -213,7 +251,9 @@ Use this when processing very large datasets to determine optimal chunk size bef
 **Returns:** Maximum recommended number of frames to load at once
 
 **Memory Model:**
-The processing pipeline requires approximately 6× the raw image size:
+This helper uses the standard DoG estimate of 6× the raw image size.
+`getboxes` budgets 8× for direct sCMOS and 9× for PSF-aware sCMOS, including an
+owned photon copy, and batches the call using that estimate:
 - Input imagestack
 - Filtered stack (DoG output)
 - Local maxima detection intermediates
@@ -395,7 +435,7 @@ sigma_large = 2.0 × psf_sigma_pixels  # Background suppression
 # P[i,j] is the integral over pixel (i,j) of a unit-photon Gaussian centered on a pixel.
 # Ks, Kl are the actual normalized small and large Gaussian kernels of this path.
 minval = min_photons * effective_gain * (sum(Ks .* P_small) - sum(Kl .* P_large))
-# effective_gain: 1 for IdealCamera (photons); QE / gain for SCMOSCamera (ADU)
+# effective_gain: 1; PSF-aware sCMOS images are converted to photons per pixel first
 ```
 
 The standard kernels come from `dog_kernel_pair`, with common odd size at least
@@ -410,8 +450,10 @@ subpixel-position effects. Noise and varying calibration affect real detections.
 ### Variance-Weighted Convolution
 For sCMOS cameras with readnoise map:
 ```julia
-# Calibration is converted per pixel when readnoise or gain is a map:
-variance = (readnoise ./ gain).^2  # ADU²
+# PSF-aware sCMOS (each calibration may be scalar or a map):
+input = (adu .- offset) .* gain ./ qe
+variance = (readnoise ./ qe).^2  # photons²
+# Direct parameters instead keep input = adu and variance = (readnoise ./ gain).^2
 # At each pixel (i,j):
 weightsum = sum(gaussian_weight / variance[ii,jj] * input[ii,jj])
 varsum = sum(gaussian_weight / variance[ii,jj])
@@ -437,8 +479,7 @@ Implements optimal inverse variance weighting for spatially-varying noise.
   default `reclaim()` started running a full GC. CUDA.jl 5, 6.0 and 6.1 use their GC-free
   `CUDA.reclaim()`. Failed attempts use `GC.gc(false)`, `CUDA.reclaim()` and
   `release_gpu_memory()`. Release after a short call takes about 0.02 ms on the
-  RTX 4090; returning 2 GiB to the driver takes about 42 ms. On CUDA.jl 5.9 to
-  6.5.0, the process is back within 64 MiB of its baseline after a call.
+  RTX 4090; returning 2 GiB to the driver takes about 42 ms.
 - **Jittered Backoff**: NVML polling uses jittered sleep intervals to avoid thundering herd when multiple processes compete for GPUs.
 - **Backend Abstraction**: KernelAbstractions enables same code for CPU/GPU variance weighting
 - **Typical Speedup**: A warmed-up 256×256×10 GPU call takes about 0.75 ms in 0.4.0,

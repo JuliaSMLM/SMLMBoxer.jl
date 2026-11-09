@@ -11,8 +11,9 @@ function simulated_spots(camera, spots; sigma=0.135, nframes=1, sampling=32)
     ]
     smld = BasicSMLD(emitters, camera, nframes, 1)
     images, _ = gen_images(smld, GaussianPSF(sigma); sampling, threaded=false)
-    # Noise-free SMLMSim images are photons; convert explicitly to the camera's ADU.
-    images .*= SMLMBoxer.get_effective_gain(camera)
+    # Noise-free SMLMSim images are photons. Every sCMOS camera here has unit gain and QE and
+    # zero offset, so photons are also counts; the counts convention itself is tested against
+    # SMLMSim's camera noise model in test/scmos.jl.
     return Float32.(images)
 end
 
@@ -20,7 +21,7 @@ end
     @testset "C4: filter-derived photon threshold" begin
         cameras = (
             IdealCamera(45, 41, 0.1),
-            SCMOSCamera(45, 41, 0.1, 1.6; gain=0.46, qe=0.72),
+            SCMOSCamera(45, 41, 0.1, 1.6),
         )
         for camera in cameras, sigma in (0.02, 0.05, 0.135, 0.22)
             @testset "$(nameof(typeof(camera))) sigma=$sigma" begin
@@ -35,7 +36,7 @@ end
                 if sigma == 0.135
                     factor = camera isa IdealCamera ? 0.547 : 0.581
                     expected = 500 * factor / (2π * (sqrt(2) * 1.35)^2)
-                    expected *= SMLMBoxer.get_effective_gain(camera)
+                    # PSF-aware filtering and its threshold are now both in photons.
                     @test args.minval ≈ expected rtol=0.01
                 end
                 for (scale, expected) in ((1.02, 1), (0.98, 0))

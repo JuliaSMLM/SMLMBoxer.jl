@@ -87,10 +87,31 @@ GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-p
 | Variance-weighted DoG | `SCMOSCamera` | Inverse-variance weighting via KernelAbstractions | Spatially-varying readnoise |
 
 Variance weighting is automatic when an `SCMOSCamera` is provided — low-noise pixels get high weight, high-noise pixels get reduced influence.
-The variance is `(readnoise / gain)^2` in ADU², evaluated per pixel when either
-calibration is a map; SMLMData's gain is in e⁻/ADU.
+PSF-aware detection converts ADU to photons per pixel and uses `(readnoise / qe)^2`
+in photons². Direct detection retains `(readnoise / gain)^2` in ADU².
+SMLMData's gain is in e⁻/ADU; calibration can be scalar or mapped.
 
 ## Parameter Interfaces
+
+Inputs are checked before any filtering, and each failure raises `ArgumentError` naming the
+field or pixels at fault:
+
+- Images are 2D or 3D `(rows, cols, frames)`, at least `boxsize` in each image dimension, and
+  free of NaN and Inf (integer images skip that scan). A stack of zero frames returns an empty
+  `ROIBatch`.
+- An `SCMOSCamera` needs finite, positive `readnoise`, `gain` and `qe`, scalar or per pixel.
+  For a noise-free readout, use an `IdealCamera` with the image in photons.
+- `min_photons` needs `psf_sigma` (with `psf_sigma` alone, 500 is used), and `psf_sigma` needs a
+  camera with square pixels of one size. Other cameras use `sigma_small`/`sigma_large` in pixels.
+- Parameters: `0 < sigma_small < sigma_large`, positive `psf_sigma` and `min_photons`, finite
+  `minval`, `boxsize >= 1`, `overlap >= 0`, `backend` in `:cpu`, `:gpu`, `:auto`, timeouts
+  `>= 0`.
+
+With an `SCMOSCamera`, the PSF-aware path detects in photons per pixel,
+`(adu - offset) * gain / qe`, so `min_photons` means the same number of photons at every pixel
+of an offset, gain or QE map (0.4.0 filtered the raw counts and converted the threshold with the
+mean gain and QE, so such cameras now get somewhat different boxes; see the CHANGELOG). Boxes are still cut from the ADU image. The direct interface
+filters the image as given, and `minval` stays in its units.
 
 **PSF-aware (recommended)** — physical units, automatic filter configuration:
 
@@ -116,7 +137,7 @@ A kwargs interface is also available for one-off calls: `getboxes(imagestack, ca
 `min_photons` sets the filtered peak of a noise-free, pixel-integrated Gaussian spot:
 a spot with that many photons centered on a pixel just reaches the threshold. See
 `BoxerConfig` for subpixel-position effects. The threshold uses the actual
-filter kernels (uniform variance for sCMOS) and effective gain, so the camera paths
+filter kernels (uniform variance for sCMOS) with effective gain 1, so the camera paths
 can give slightly different thresholds. Noise and spatially varying calibration affect
 which real spots pass it.
 
@@ -200,8 +221,7 @@ memory without a full garbage collection. On 500 frames at 256×256, IdealCamera
 throughput increases from 5,329 to 13,805 images/s.
 
 Release after a short call takes about 0.02 ms on the RTX 4090; returning
-2 GiB to the driver takes about 42 ms. On CUDA.jl 5.9 to 6.5.0, the process is
-back within 64 MiB of its baseline after a call.
+2 GiB to the driver takes about 42 ms.
 
 Standard DoG uses NNlib on CPU and a KernelAbstractions kernel on GPU;
 variance-weighted sCMOS uses KernelAbstractions custom kernels on both. Run

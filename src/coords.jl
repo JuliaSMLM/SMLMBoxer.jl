@@ -129,7 +129,7 @@ clamped-corner selection.
 - `coords`: Matrix of (row, col, frame, filtered intensity) with overlaps removed
 """
 function removeoverlap(coords::Vector{Matrix{Float32}}, kwargs::GetBoxesArgs)
-    k = max(3, floor(Int, kwargs.boxsize - kwargs.overlap))
+    k = floor(Int, max(3, kwargs.boxsize - kwargs.overlap))
     separation = cld(k, 2)
     for f in eachindex(coords)
         c = coords[f]
