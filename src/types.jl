@@ -195,47 +195,50 @@ end
 """
     get_pixel_size(camera::AbstractCamera)
 
-Extract pixel size in microns for PSF-aware detection. Every pixel must be square
-and uniformly sized (relative tolerance 1e-4); otherwise use direct pixel sigmas.
-The size is each axis's span divided by its pixel count, in Float64.
+Extract pixel size in microns for PSF-aware detection, or raise `ArgumentError` unless the
+pixels are uniform and square (relative tolerance 1e-4); such cameras can use direct pixel
+sigmas. The rules, with each axis's pitch its span over its pixel count:
+- every pixel's width is positive and within 1e-4 of its axis's pitch, beyond the rounding of
+  its two stored edges (a uniform 2048-pixel Float32 camera has widths off by up to 1.5e-4);
+- the two pitches agree within 1e-4, beyond the rounding of the four end edges over the counts.
 
 # Arguments
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
 
 # Returns
-- Pixel size in microns (x-direction), Float64
+- Pixel size in microns, Float64: the first x pixel's width, as in 0.4.0, so a camera that
+  passes gets the same filters as before.
 """
 function get_pixel_size(camera::AbstractCamera)
-    pitch_x = uniform_pitch(camera.pixel_edges_x)
-    pitch_y = uniform_pitch(camera.pixel_edges_y)
-    pitch_x !== nothing && pitch_y !== nothing && isapprox(pitch_x, pitch_y; rtol=1e-4) ||
+    x = axis_pitch(camera.pixel_edges_x)
+    y = axis_pitch(camera.pixel_edges_y)
+    x !== nothing && y !== nothing &&
+        abs(x.pitch - y.pitch) <= 1e-4 * max(x.pitch, y.pitch) + x.uncertainty + y.uncertainty ||
         throw(ArgumentError("psf_sigma requires uniform square pixels (relative tolerance 1e-4); " *
             "this camera can use sigma_small/sigma_large in pixels"))
-    return pitch_x
+    return Float64(camera.pixel_edges_x[2] - camera.pixel_edges_x[1])
 end
 
 """
-    uniform_pitch(edges) -> Union{Float64, Nothing}
+    axis_pitch(edges) -> Union{NamedTuple, Nothing}
 
-Pixel pitch of one axis, its span over its pixel count in Float64, so an origin far from zero
-keeps its accuracy; `nothing` if any pixel's width differs from it by more than 1e-4 relative
-beyond the rounding of the stored edges (a width of a uniform camera stored in Float32 can be off
-by one unit in the last place of its largest edge: 2.4e-4 of a pixel for 2048 pixels of 0.1 µm).
+One axis's pitch, its span over its pixel count in Float64, and that pitch's uncertainty from
+the rounding of the two end edges; `nothing` if a width is not positive or not within 1e-4 of
+the pitch beyond the rounding of its own two edges (see `get_pixel_size`).
 """
-function uniform_pitch(edges)
-    n = length(edges) - 1
+function axis_pitch(edges)
+    stored = collect(edges)
+    n = length(stored) - 1
     n >= 1 || return nothing
-    first_edge, last_edge = Float64(first(edges)), Float64(last(edges))
-    pitch = (last_edge - first_edge) / n
+    values = Float64.(stored)
+    ulps = [Float64(eps(float(v))) for v in stored]  # spacing of the stored type at each edge
+    pitch = (values[end] - values[1]) / n
     isfinite(pitch) && pitch > 0 || return nothing
-    rounding = 2 * Float64(eps(float(max(abs(first(edges)), abs(last(edges))))))
-    previous = first_edge
-    for i in 2:(n + 1)
-        edge = Float64(edges[i])
-        abs((edge - previous) - pitch) <= 1e-4 * pitch + rounding || return nothing
-        previous = edge
+    for i in 1:n
+        width = values[i + 1] - values[i]
+        width > 0 && abs(width - pitch) <= 1e-4 * pitch + ulps[i] + ulps[i + 1] || return nothing
     end
-    return pitch
+    return (pitch=pitch, uncertainty=(ulps[1] + ulps[end]) / n)
 end
 
 """
@@ -503,12 +506,14 @@ function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int,Int}; pho
     validate_scmos_calibration(camera)
     # PSF-aware detection uses photons²; direct parameters retain ADU².
     divisor = photons ? camera.qe : camera.gain
-    # Square in Float64: low-precision calibration (Float16) can overflow before the Float32 result,
-    # e.g. readnoise 20 with qe 0.05 gives 160,000 photons², above Float16's largest value.
+    # Compute in the calibration's own arithmetic type, widened to at least Float32: Float16
+    # overflows (readnoise 20 with qe 0.05 gives 160,000, above Float16's largest value), while
+    # Float32 and Float64 calibration keep 0.4.0's arithmetic exactly.
+    S = promote_type(typeof(one(eltype(camera.readnoise)) / one(eltype(divisor))), Float32)
     if camera.readnoise isa AbstractArray || divisor isa AbstractArray
-        return Float32.((Float64.(camera.readnoise) ./ Float64.(divisor)).^2)
+        return Float32.((S.(camera.readnoise) ./ S.(divisor)).^2)
     else
-        return fill(Float32((Float64(camera.readnoise) / Float64(divisor))^2), imagesize)
+        return fill(Float32((S(camera.readnoise) / S(divisor))^2), imagesize)
     end
 end
 

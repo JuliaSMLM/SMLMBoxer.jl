@@ -156,21 +156,30 @@ end
         for p in (0.1f0, 0.065f0), cam in (IdealCamera(2048, 2048, p), SCMOSCamera(2048, 2048, p, 1.6f0))
             @test SMLMBoxer.get_pixel_size(cam) ≈ p rtol=1e-6
         end
-        # Far from the origin the first width is off by 6e-4 of a pixel; the pitch comes from the
-        # span, and a spot simulated there is found.
+        # Far from the origin, Float32 rounding moves each width by up to 6e-4 of a pixel; the
+        # camera is uniform within that rounding, is accepted, and a spot simulated there is found.
         far = Float32.(1000 .+ (0:33) .* 0.1)
         far_camera = IdealCamera(far, far)
-        @test SMLMBoxer.get_pixel_size(far_camera) ≈ 0.1 rtol=1e-5
+        @test SMLMBoxer.get_pixel_size(far_camera) ≈ 0.1 rtol=1e-3
         far_spot = Emitter2DFit{Float64}(1001.65, 1001.65, 2000., 0., 0., 0., 0., 0.; frame=1)
         far_image, _ = gen_images(BasicSMLD([far_spot], far_camera, 1, 1), GaussianPSF(0.13);
             threaded=false, sampling=32)
         rois, _ = getboxes(Float32.(far_image), far_camera; psf_sigma=0.13, backend=:cpu)
         @test length(rois) == 1
-        # The rounding allowance applies within an axis only: pixels that differ between x and y
-        # are still refused, however the camera is stored.
+        # Cameras built from a pixel count and size keep 0.4.0's pixel size (the first width), so
+        # their filters and boxes do not change; that includes unequal counts in Float16.
+        for cam in (IdealCamera(33, 33, 0.16f0), IdealCamera(2048, 2048, 0.1f0),
+                    IdealCamera(32, 33, Float16(0.1)), SCMOSCamera(32, 33, Float16(0.1), Float16(1.6)))
+            @test SMLMBoxer.get_pixel_size(cam) == Float64(cam.pixel_edges_x[2] - cam.pixel_edges_x[1])
+        end
+        # Edge rounding is allowed per pixel and per axis only: pixels that differ between x and
+        # y, a width more than 1e-4 from its axis's pitch, and a backward edge are refused.
         for cam in (IdealCamera(2048, 2048, (0.1f0, 0.10002f0)),
                     SCMOSCamera(2048, 2048, (0.1f0, 0.10002f0), 1.6f0),
-                    IdealCamera(1024, 1024, (Float16(0.0625), Float16(0.125))))
+                    IdealCamera(1024, 1024, (Float16(0.0625), Float16(0.125))),
+                    IdealCamera(vcat(0., cumsum(repeat([0.099985, 0.100015], 4))), collect(0:8) .* 0.1),
+                    IdealCamera(Float16[1024, 1025, 1024, 1025, 1026, 1027, 1028, 1029],
+                                Float16[1024, 1025, 1024, 1025, 1026, 1027, 1028, 1029]))
             argument_message(() -> SMLMBoxer.get_pixel_size(cam), "square")
         end
     end
