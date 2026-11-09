@@ -8,8 +8,6 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
 
 ## [Unreleased]
 
-## [0.4.1]
-
 ### Fixed
 - With an `SCMOSCamera`, PSF-aware detection (`psf_sigma` with `min_photons`) now works in
   photons per pixel: each pixel becomes `(adu - offset) * gain / qe`, weighted by the
@@ -40,8 +38,12 @@ Julia's rule for 0.Y.Z: raising Z breaks nothing, raising Y is an interface brea
   `boxsize >= 1`, `backend` one of `:cpu`, `:gpu`, `:auto`, and timeouts `>= 0`. Swapped
   sigmas previously returned rings of false boxes, and `psf_sigma = 0` returned no boxes.
 - `psf_sigma` with a camera whose pixels are not square, or not all the same size, raises
-  `ArgumentError` (relative tolerance 1e-4); the PSF width was converted with the x pixel size
-  only. Such cameras can use `sigma_small` and `sigma_large` in pixels.
+  `ArgumentError` (relative tolerance 1e-4, beyond the rounding of the stored pixel edges, so a
+  uniform 2048-pixel camera stored in Float32 passes); the PSF width was converted with the x
+  pixel size only. Such cameras can use `sigma_small` and `sigma_large` in pixels.
+- sCMOS read noise, gain and QE stored at low precision (Float16) no longer overflow the noise
+  variance, which is now computed in Float64 on both paths: with read noise 20 and QE 0.05, the
+  photon variance of 160,000 was infinite and a bright spot gave no box.
 
 ## [0.4.0] - 2026-11-02
 

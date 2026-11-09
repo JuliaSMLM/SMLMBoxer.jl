@@ -196,7 +196,8 @@ end
     get_pixel_size(camera::AbstractCamera)
 
 Extract pixel size in microns for PSF-aware detection. Every pixel must be square
-and uniformly sized (relative tolerance 1e-4); otherwise use direct pixel sigmas.
+and uniformly sized (relative tolerance 1e-4, plus the rounding of the camera's
+stored edge values); otherwise use direct pixel sigmas.
 
 # Arguments
 - `camera`: Camera object (IdealCamera or SCMOSCamera)
@@ -205,12 +206,17 @@ and uniformly sized (relative tolerance 1e-4); otherwise use direct pixel sigmas
 - Pixel size in microns (x-direction)
 """
 function get_pixel_size(camera::AbstractCamera)
-    pixel_size = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
-    widths_x, widths_y = diff(camera.pixel_edges_x), diff(camera.pixel_edges_y)
+    edges_x, edges_y = camera.pixel_edges_x, camera.pixel_edges_y
+    pixel_size = edges_x[2] - edges_x[1]
+    widths_x, widths_y = diff(edges_x), diff(edges_y)
     narrowest = min(minimum(widths_x), minimum(widths_y))
     widest = max(maximum(widths_x), maximum(widths_y))
+    # Each stored edge is rounded to its own precision, so two widths of a uniform camera can
+    # differ by about twice the floating-point spacing at the largest edge: for 2048 Float32
+    # pixels of 0.1 µm, about 3e-5 µm, which is 3e-4 of a pixel.
+    rounding = 4 * max(eps(float(maximum(abs, edges_x))), eps(float(maximum(abs, edges_y))))
     isfinite(narrowest) && narrowest > 0 && isfinite(widest) &&
-        isapprox(narrowest, widest; rtol=1e-4, atol=0) ||
+        isapprox(narrowest, widest; rtol=1e-4, atol=rounding) ||
         throw(ArgumentError("psf_sigma requires uniform square pixels (relative tolerance 1e-4); " *
             "this camera can use sigma_small/sigma_large in pixels"))
     return pixel_size
@@ -481,10 +487,12 @@ function get_variance_map(camera::SCMOSCamera{T}, imagesize::Tuple{Int,Int}; pho
     validate_scmos_calibration(camera)
     # PSF-aware detection uses photons²; direct parameters retain ADU².
     divisor = photons ? camera.qe : camera.gain
+    # Square in Float64: low-precision calibration (Float16) can overflow before the Float32 result,
+    # e.g. readnoise 20 with qe 0.05 gives 160,000 photons², above Float16's largest value.
     if camera.readnoise isa AbstractArray || divisor isa AbstractArray
-        return Float32.((camera.readnoise ./ divisor).^2)
+        return Float32.((Float64.(camera.readnoise) ./ Float64.(divisor)).^2)
     else
-        return fill(Float32((camera.readnoise / divisor)^2), imagesize)
+        return fill(Float32((Float64(camera.readnoise) / Float64(divisor))^2), imagesize)
     end
 end
 

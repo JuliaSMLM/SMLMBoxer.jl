@@ -151,5 +151,26 @@ end
             cam = IdealCamera(edges, factor .* edges)
             @test length(first(getboxes(image, cam; psf_sigma=0.13, backend=:cpu))) == 1
         end
+        # Uniform cameras stored in Float32: rounding of the stored edges alone makes widths of a
+        # 2048-pixel camera differ by more than 1e-4 relative; they are uniform and are accepted.
+        for p in (0.1f0, 0.065f0), cam in (IdealCamera(2048, 2048, p), SCMOSCamera(2048, 2048, p, 1.6f0))
+            @test SMLMBoxer.get_pixel_size(cam) ≈ p rtol=1e-3
+        end
+        large = IdealCamera(2048, 2048, 0.1f0)
+        @test length(first(getboxes(zeros(Float32, 2048, 2048, 1), large; psf_sigma=0.13,
+            backend=:cpu))) == 0
+    end
+
+    @testset "Low-precision sCMOS calibration does not overflow the variance" begin
+        # (readnoise / qe)^2 = 160,000 photons² is above Float16's largest value.
+        for mapped in (false, true)
+            noise = mapped ? fill(Float16(20), 9, 9) : Float16(20)
+            cam = SCMOSCamera(9, 9, Float16(0.125), noise; gain=Float16(0.5), qe=Float16(0.05))
+            for (photons, expected) in ((true, 160_000), (false, 1_600))
+                variance = SMLMBoxer.get_variance_map(cam, (9, 9); photons)
+                @test all(isfinite, variance)
+                @test variance[5, 5] ≈ expected rtol=1e-3
+            end
+        end
     end
 end
